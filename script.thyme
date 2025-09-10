@@ -1,0 +1,58 @@
+// attach this to an object in your scene
+
+_ackfile = "ack.txt";
+_infile = "input.txt";
+_lastline = -1;
+_pollEvery = 120;
+_currentLine = "";
+_currentCmd = "";
+_currentSeq = 0;
+_currentSplit = [];
+
+postStep = (e) => {
+  ((Sim.tick % e.this._pollEvery) == 0) ? {
+      e.this.pollCommands(e.this)
+      
+  } : {};
+};
+
+pollCommands = (e) => {
+    t = System.ReadWholeFile(e._infile);
+    (t == nil) ? {} : {
+        lines = string.split(t, "\n");
+        for(string.length(lines), (i) => {
+            (string.length(lines(i)) == 0) ? {} : { 
+                e._currentLine = lines(i);
+                e.readLine(e);
+            };
+        })
+    }
+};
+
+readLine = (e) => {
+    split = string.split(e._currentLine, " ");
+    e._currentSplit = split;
+    seq = math.toInt(split(0));
+    cmd = split(1);
+    e._currentSeq = seq;
+    e._currentCmd = cmd;
+
+    (e._lastline >= seq) ? {} : {
+        (e._currentCmd == "PRINT") ? {
+            e.executePrintCmd(e);
+        } : {};
+        
+        e.ackCmd(e);
+    }
+};
+
+executePrintCmd = (e) => {
+    print(e._currentSplit(2));
+};
+
+ackCmd = (e) => {
+    seq = e._currentSeq;
+    System.WriteToFile(e._ackfile, "" + seq + "\n");
+    e._lastline = seq;
+};
+
