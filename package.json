@@ -11,6 +11,7 @@
     "typescript": "^5.4.0",
     "esbuild": "^0.21.3",
     "vitest": "^1.6.0",
-    "@types/node": "^20.11.0"
+    "@types/node": "^20.11.0",
+    "tsup": "^8.0.0"
   }
 }

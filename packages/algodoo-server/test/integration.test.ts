@@ -1,15 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { startServer } from '../src/server';
+import { startServer, ClientMessage } from '../src/server';
 import { WebSocket } from 'ws';
 import { AddressInfo } from 'net';
+import { cmdDispatcherPlugin } from '../../algodoo-cmd-dispatcher/src/index';
 
-function once(ws: WebSocket): Promise<any> {
-  return new Promise((resolve) => ws.once('message', (d) => resolve(JSON.parse(d.toString()))));
+function once(ws: WebSocket): Promise<ClientMessage> {
+  return new Promise((resolve) =>
+    ws.once('message', (d: WebSocket.RawData) =>
+      resolve(JSON.parse(d.toString()) as ClientMessage)
+    )
+  );
 }
 
 describe('server-client roundtrip', () => {
   it('handles submit to acked', async () => {
-    const wss = startServer(0);
+    const wss = startServer({ port: 0, plugins: [cmdDispatcherPlugin] });
     const port = (wss.address() as AddressInfo).port;
     const url = `ws://localhost:${port}`;
 

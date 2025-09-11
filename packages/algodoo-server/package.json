@@ -1,13 +1,20 @@
 {
   "name": "algodoo-server",
   "version": "1.0.0",
-  "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/server.js",
+  "module": "dist/server.mjs",
+  "types": "dist/server.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/server.js",
+      "import": "./dist/server.mjs"
+    }
+  },
   "bin": {
     "algodoo-server": "dist/index.js"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\"",
+    "build": "tsup src/index.ts src/server.ts --format esm,cjs --dts",
     "start": "node dist/index.js",
     "test": "vitest run"
   },

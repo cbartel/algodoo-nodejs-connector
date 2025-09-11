@@ -2,8 +2,14 @@ export type RuntimeCallbacks = {
   onAccepted?: (seq: number) => void;
   onAcked?: (seq: number) => void;
   onError?: (msg: string) => void;
-  onStatus?: (info: any) => void;
+  onStatus?: (info: Record<string, unknown>) => void;
 };
+
+type AcceptedMessage = { type: 'accepted'; payload: { seq: number } };
+type AckedMessage = { type: 'acked'; payload: { seq: number } };
+type ErrorMessage = { type: 'error'; payload: { message: string } };
+type StatusMessage = { type: 'status'; payload: Record<string, unknown> };
+type ServerMessage = AcceptedMessage | AckedMessage | ErrorMessage | StatusMessage;
 
 export class Runtime {
   private url: string;
@@ -26,7 +32,7 @@ export class Runtime {
       this.startHeartbeat();
     });
     this.ws.addEventListener('message', (ev) => {
-      const msg = JSON.parse(ev.data.toString());
+      const msg = JSON.parse(ev.data.toString()) as ServerMessage;
       if (msg.type === 'accepted') {
         const resolver = this.acceptResolvers.shift();
         if (resolver) resolver(msg.payload.seq);

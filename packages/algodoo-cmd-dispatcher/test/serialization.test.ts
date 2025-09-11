@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serializeParams, SeqCounter } from '../src/server';
+import { serializeParams, SeqCounter } from '../src/index';
 
 describe('serializeParams', () => {
   it('replaces newlines and carriage returns', () => {
