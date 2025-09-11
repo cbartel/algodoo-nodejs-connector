@@ -17,5 +17,8 @@
   "dependencies": {
     "algodoo-server": "workspace:*",
     "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.17.0"
   }
 }

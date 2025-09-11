@@ -17,7 +17,7 @@ export class Runtime {
   private backoff = 500;
   private callbacks: RuntimeCallbacks;
   private acceptResolvers: ((seq: number) => void)[] = [];
-  private heartbeat?: NodeJS.Timer;
+  private heartbeat?: NodeJS.Timeout;
 
   constructor(url: string, cb: RuntimeCallbacks = {}) {
     this.url = url;

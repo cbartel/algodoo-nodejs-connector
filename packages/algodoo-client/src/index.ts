@@ -1,4 +1,4 @@
-import { WebSocket } from 'ws';
+import {RawData, WebSocket} from 'ws';
 import fs from 'fs/promises';
 
 interface EnqueueMsg {
@@ -73,7 +73,7 @@ function connect() {
     setInterval(() => pollAck(ws), POLL_MS);
   });
 
-  ws.on('message', async (data: WebSocket.RawData) => {
+  ws.on('message', async (data: RawData) => {
     const msg = JSON.parse(data.toString()) as ServerMessage;
     if (msg.type === 'enqueue') {
       if (inflight.length >= 50) return;
