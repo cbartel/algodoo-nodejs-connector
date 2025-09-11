@@ -25,11 +25,15 @@ Each package emits CommonJS, ES modules and TypeScript declarations in its
 
 ## Running the server
 
-Start the server and load the command dispatcher plugin:
+Build the packages and start the server with the command dispatcher plugin:
 
 ```
-pnpm algodoo-server algodoo-cmd-dispatcher
+pnpm build
+node packages/algodoo-server/dist/index.js algodoo-cmd-dispatcher
 ```
+
+The plugin registers a HTTP path and serves a small React UI at
+`http://localhost:8080/cmd`.
 
 Programmatic usage:
 
@@ -71,6 +75,8 @@ Plugins implement the `ServerPlugin` interface exported by `algodoo-server`:
 ```ts
 interface ServerPlugin {
   name: string;
+  path?: string;
+  handleHttp?(req: IncomingMessage, res: ServerResponse, ctx: PluginContext): void;
   init?(ctx: PluginContext): void;
   onConnection?(ws: WebSocket, ctx: PluginContext): void;
   onMessage?(ws: WebSocket, msg: ClientMessage, ctx: PluginContext): void;

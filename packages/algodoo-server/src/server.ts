@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import http from 'http';
 
 export interface ClientMessage<T = unknown> {
   type: string;
@@ -6,6 +7,7 @@ export interface ClientMessage<T = unknown> {
 }
 
 export interface PluginContext {
+  server: http.Server;
   wss: WebSocketServer;
   clients: Set<WebSocket>;
   broadcast(message: unknown): void;
@@ -14,6 +16,8 @@ export interface PluginContext {
 
 export interface ServerPlugin {
   name: string;
+  path?: string;
+  handleHttp?(req: http.IncomingMessage, res: http.ServerResponse, ctx: PluginContext): void;
   init?(ctx: PluginContext): void;
   onConnection?(ws: WebSocket, ctx: PluginContext): void;
   onMessage?(ws: WebSocket, msg: ClientMessage, ctx: PluginContext): void;
@@ -28,11 +32,23 @@ export interface StartServerOptions {
 const DEFAULT_PORT = Number(process.env.PORT || 8080);
 
 export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOptions = {}) {
-  const wss = new WebSocketServer({ port });
-  console.log(`algodoo-server listening on ${port}`);
+  const server = http.createServer((req, res) => {
+    const url = req.url ?? '/';
+    for (const plugin of plugins) {
+      if (plugin.path && url.startsWith(`/${plugin.path}`)) {
+        plugin.handleHttp?.(req, res, ctx);
+        return;
+      }
+    }
+    res.statusCode = 404;
+    res.end('not found');
+  });
+  const wss = new WebSocketServer({ server });
+  server.listen(port, () => console.log(`algodoo-server listening on ${port}`));
   const clients = new Set<WebSocket>();
 
   const ctx: PluginContext = {
+    server,
     wss,
     clients,
     broadcast,
