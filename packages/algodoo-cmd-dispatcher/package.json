@@ -11,14 +11,18 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "build": "tsup src/index.ts --format esm,cjs --dts && tsup ui/main.tsx --format esm --bundle --out-dir dist/ui && cp ui/index.html dist/ui/index.html",
     "test": "vitest run"
   },
   "dependencies": {
     "algodoo-server": "workspace:*",
-    "ws": "^8.17.0"
+    "ws": "^8.17.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.17.0"
+    "@types/ws": "^8.17.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
   }
 }

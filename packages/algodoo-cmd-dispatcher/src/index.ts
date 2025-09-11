@@ -1,9 +1,13 @@
 import { WebSocket } from 'ws';
+import { createReadStream, existsSync } from 'fs';
+import { dirname, join, extname } from 'path';
+import { fileURLToPath } from 'url';
 import type {
   ServerPlugin,
   PluginContext,
   ClientMessage,
 } from 'algodoo-server';
+import type { IncomingMessage, ServerResponse } from 'http';
 
 export interface SubmitPayload {
   cmd: 'EVAL';
@@ -75,9 +79,26 @@ function handleDrain(ws: WebSocket, payload: DrainPayload, ctx: PluginContext): 
 }
 
 export const seqCounter = new SeqCounter();
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const uiDir = join(__dirname, 'ui');
 
 export const cmdDispatcherPlugin: ServerPlugin = {
   name: 'cmd-dispatcher',
+  path: 'cmd',
+  handleHttp(req: IncomingMessage, res: ServerResponse) {
+    let urlPath = req.url ?? '/cmd';
+    urlPath = urlPath.replace(/^\/?cmd\/?/, '');
+    const filePath = join(uiDir, urlPath || 'index.html');
+    if (existsSync(filePath)) {
+      const ext = extname(filePath);
+      if (ext === '.js') res.setHeader('Content-Type', 'text/javascript');
+      else if (ext === '.html') res.setHeader('Content-Type', 'text/html');
+      createReadStream(filePath).pipe(res);
+    } else {
+      res.statusCode = 404;
+      res.end('not found');
+    }
+  },
   init(ctx) {
     setInterval(() => {
       ctx.broadcast({ type: 'status', payload: { inflight: inflight.length, lastAck } });
