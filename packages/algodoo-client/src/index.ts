@@ -20,6 +20,9 @@ const POLL_MS = Number(process.env.POLL_MS || 250);
 
 let inflight: EnqueueMsg[] = [];
 let lastAck = -1;
+let isResetting = false;
+let resetSeq: number | null = null;
+const pending: EnqueueMsg[] = [];
 
 async function loadState() {
   try {
@@ -36,14 +39,20 @@ async function loadState() {
     lastAck = last ? Number(last) : -1;
   } catch {}
   inflight = inflight.filter((i) => i.seq > lastAck);
+  debug('[client] loaded state:', { inflight: inflight.length, lastAck });
   await writeInput();
 }
 
 async function writeInput() {
   const tmp = INPUT_PATH + '.tmp';
-  const data = inflight.map((i) => i.line).join('\n');
+  // If resetting, ensure ONLY the reset line is present in the input file
+  const effective = isResetting && resetSeq != null
+    ? inflight.filter((i) => i.seq === resetSeq)
+    : inflight;
+  const data = effective.map((i) => i.line).join('\n');
   await fs.writeFile(tmp, data + (data ? '\n' : ''));
   await fs.rename(tmp, INPUT_PATH);
+  debug('[client] wrote input file:', { path: INPUT_PATH, lines: effective.length, resetting: isResetting, resetSeq });
 }
 
 async function pollAck(ws: WebSocket): Promise<void> {
@@ -53,13 +62,39 @@ async function pollAck(ws: WebSocket): Promise<void> {
     const last = lines[lines.length - 1];
     const ack = last ? Number(last) : -1;
     if (ack > lastAck) {
+      // Log each acked sequence number for transparency
+      for (let s = lastAck + 1; s <= ack; s++) console.log('[client] ack:', s);
       lastAck = ack;
-      inflight = inflight.filter((i) => i.seq > lastAck);
+      // If we were resetting and the reset has been acknowledged, finish reset.
+      if (isResetting && resetSeq != null && ack >= resetSeq) {
+        console.log('[client] RESET acknowledged. Completing reset and switching to normal operation.', { resetSeq });
+        // Fresh ack.txt: truncate the file so we start clean
+        try {
+          await fs.writeFile(ACK_PATH, '');
+          console.log('[client] ack.txt cleared for fresh start:', { path: ACK_PATH });
+        } catch (e) {
+          console.log('[client] failed clearing ack.txt (continuing):', String(e));
+        }
+        // Reset internal state
+        isResetting = false;
+        resetSeq = null;
+        lastAck = -1;
+        inflight = [];
+        // Move any buffered pending enqueues into inflight and write them out
+        while (pending.length && inflight.length < 50) {
+          const item = pending.shift()!;
+          inflight.push(item);
+        }
+      } else {
+        inflight = inflight.filter((i) => i.seq > lastAck);
+      }
       await writeInput();
     }
     ws.send(JSON.stringify({ type: 'drain', payload: { lastAck, inflight: inflight.length } }));
+    debug('[client] sent drain:', { lastAck, inflight: inflight.length });
   } catch {
     ws.send(JSON.stringify({ type: 'drain', payload: { lastAck, inflight: inflight.length } }));
+    debug('[client] sent drain (no ack file):', { lastAck, inflight: inflight.length });
   }
 }
 
@@ -68,7 +103,14 @@ function connect() {
   const ws = new WebSocket(SERVER_URL);
 
   ws.on('open', () => {
+    debug('[client] connected to server:', SERVER_URL);
     backoff = 500;
+    // Initiate RESET handshake: write a new input.txt containing ONLY "<lastAck+1> RESET"
+    resetSeq = (lastAck ?? -1) + 1;
+    isResetting = true;
+    inflight = [ { seq: resetSeq, line: `${resetSeq} RESET` } ];
+    console.log('[client] reset-start:', { resetSeq });
+    writeInput().catch(() => {});
     pollAck(ws);
     setInterval(() => pollAck(ws), POLL_MS);
   });
@@ -77,17 +119,33 @@ function connect() {
     const msg = JSON.parse(data.toString()) as ServerMessage;
     if (msg.type === 'enqueue') {
       if (inflight.length >= 50) return;
-      inflight.push({ seq: msg.payload.seq, line: msg.payload.line });
-      await writeInput();
+      const item = { seq: msg.payload.seq, line: msg.payload.line };
+      if (isResetting) {
+        // Buffer until RESET completes to keep input.txt containing only RESET line
+        pending.push(item);
+        debug('[client] buffered enqueue (during reset):', { seq: item.seq });
+      } else {
+        inflight.push(item);
+        console.log('[client] command-received:', { seq: item.seq });
+        await writeInput();
+      }
     }
   });
 
   ws.on('close', () => {
+    debug('[client] connection closed; will retry in ms:', backoff);
     setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 10000);
   });
 
-  ws.on('error', () => ws.close());
+  ws.on('error', (err) => {
+    debug('[client] ws error:', String(err));
+    ws.close();
+  });
 }
 
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+const debug = (...args: unknown[]) => {
+  if (LOG_LEVEL === 'debug') console.log(...args);
+};
 loadState().then(connect);

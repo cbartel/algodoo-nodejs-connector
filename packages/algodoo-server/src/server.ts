@@ -34,8 +34,13 @@ const DEFAULT_PORT = Number(process.env.PORT || 8080);
 export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOptions = {}) {
   const server = http.createServer((req, res) => {
     const url = req.url ?? '/';
+    if (url === '/favicon.ico') {
+      res.statusCode = 204;
+      return res.end();
+    }
     for (const plugin of plugins) {
       if (plugin.path && url.startsWith(`/${plugin.path}`)) {
+        // quiet: route is handled by plugin
         plugin.handleHttp?.(req, res, ctx);
         return;
       }
@@ -44,7 +49,7 @@ export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOp
     res.end('not found');
   });
   const wss = new WebSocketServer({ server });
-  server.listen(port, () => console.log(`algodoo-server listening on ${port}`));
+  server.listen(port, () => console.log(`[server] listening on ${port}`));
   const clients = new Set<WebSocket>();
 
   const ctx: PluginContext = {
@@ -61,6 +66,7 @@ export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOp
 
   wss.on('connection', (ws) => {
     clients.add(ws);
+    // quiet: connection count
     for (const plugin of plugins) plugin.onConnection?.(ws, ctx);
 
     ws.on('message', (data) => {
@@ -71,11 +77,13 @@ export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOp
         send(ws, { type: 'error', payload: { message: String(err) } });
         return;
       }
+      // quiet: message type
       for (const plugin of plugins) plugin.onMessage?.(ws, msg, ctx);
     });
 
     ws.on('close', () => {
       clients.delete(ws);
+      // quiet: connection count
       for (const plugin of plugins) plugin.onClose?.(ws, ctx);
     });
   });

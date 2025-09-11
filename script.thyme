@@ -45,7 +45,11 @@ readLine = (e) => {
             e.executeEvalCmd(e);
         } : {};
         
-        e.ackCmd(e);
+        (e._currentCmd == "RESET") ? {
+            e.executeResetCmd(e);
+        } : {
+            e.ackCmd(e);
+        };
     }
 };
 
@@ -77,6 +81,12 @@ executeEvalCmd = (e) => {
   geval(cmd);
 };
 
+executeResetCmd = (e) => {
+    print("reset");
+    seq = e._currentSeq;
+    System.WriteToFile(e._ackfile, "" + seq + "\n");
+    e._lastline = -1;
+};
 
 ackCmd = (e) => {
     seq = e._currentSeq;
