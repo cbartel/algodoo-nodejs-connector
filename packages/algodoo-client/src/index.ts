@@ -6,6 +6,13 @@ interface EnqueueMsg {
   line: string;
 }
 
+interface EnqueueMessage {
+  type: 'enqueue';
+  payload: EnqueueMsg;
+}
+
+type ServerMessage = EnqueueMessage;
+
 const SERVER_URL = process.env.SERVER_URL || 'ws://localhost:8080';
 const INPUT_PATH = process.env.INPUT || './input.txt';
 const ACK_PATH = process.env.ACK || './ack.txt';
@@ -39,7 +46,7 @@ async function writeInput() {
   await fs.rename(tmp, INPUT_PATH);
 }
 
-async function pollAck(ws: WebSocket) {
+async function pollAck(ws: WebSocket): Promise<void> {
   try {
     const ackContent = await fs.readFile(ACK_PATH, 'utf8');
     const lines = ackContent.trim().split(/\n+/);
@@ -66,8 +73,8 @@ function connect() {
     setInterval(() => pollAck(ws), POLL_MS);
   });
 
-  ws.on('message', async (data) => {
-    const msg = JSON.parse(data.toString());
+  ws.on('message', async (data: WebSocket.RawData) => {
+    const msg = JSON.parse(data.toString()) as ServerMessage;
     if (msg.type === 'enqueue') {
       if (inflight.length >= 50) return;
       inflight.push({ seq: msg.payload.seq, line: msg.payload.line });
