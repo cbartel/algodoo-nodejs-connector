@@ -1,0 +1,15 @@
+{
+  "name": "algodoo-cmd-dispatcher",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "esbuild src/index.tsx --bundle --platform=browser --target=es2022 --outfile=dist/index.js --jsx=automatic",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "algodoo-runtime": "workspace:*"
+  }
+}
