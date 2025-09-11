@@ -1,0 +1,17 @@
+{
+  "name": "algodoo-client",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "algodoo-client": "dist/index.js"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\"",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "ws": "^8.17.0"
+  }
+}

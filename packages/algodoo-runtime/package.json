@@ -1,0 +1,11 @@
+{
+  "name": "algodoo-runtime",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=neutral --format=esm --target=es2022 --outfile=dist/index.js",
+    "test": "vitest run"
+  }
+}

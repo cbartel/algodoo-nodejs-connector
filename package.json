@@ -1,0 +1,16 @@
+{
+  "name": "algodoo-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "esbuild": "^0.21.3",
+    "vitest": "^1.6.0",
+    "@types/node": "^20.11.0"
+  }
+}
