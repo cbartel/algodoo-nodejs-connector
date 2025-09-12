@@ -1,5 +1,6 @@
 _ackfile = "ack.txt";
 _infile = "input.txt";
+_outfile = "output.txt";
 _lastline = -1;
 _pollEvery = 120;
 _currentLine = "";
@@ -7,11 +8,23 @@ _currentCmd = "";
 _currentSeq = 0;
 _currentSplit = [];
 _parsedCmd = "";
+_init = false;
+
 
 postStep = (e) => {
+  e.this._init ? {} : {
+      scene.my._outfile = e.this._outfile;
+      scene.my._eventCount = 0;
+      scene.my.sendEvent = (type, params) => {
+          line := "" + scene.my._eventCount + " " + type + " " + math.toString(params);
+          System.WriteToFile(scene.my._outfile, line + "\n");
+          scene.my._eventCount = scene.my._eventCount + 1;
+      };
+      e.this._init = true;
+  };
+
   ((Sim.tick % e.this._pollEvery) == 0) ? {
-      e.this.pollCommands(e.this)
-      
+      e.this.pollCommands(e.this);
   } : {};
 };
 
@@ -20,7 +33,7 @@ pollCommands = (e) => {
     (t == nil) ? {} : {
         lines = string.split(t, "\n");
         for(string.length(lines), (i) => {
-            (string.length(lines(i)) == 0) ? {} : { 
+            (string.length(lines(i)) == 0) ? {} : {
                 e._currentLine = lines(i);
                 e.readLine(e);
             };
@@ -40,11 +53,11 @@ readLine = (e) => {
         (e._currentCmd == "PRINT") ? {
             e.executePrintCmd(e);
         } : {};
-        
+
         (e._currentCmd == "EVAL") ? {
             e.executeEvalCmd(e);
         } : {};
-        
+
         (e._currentCmd == "RESET") ? {
             e.executeResetCmd(e);
         } : {
@@ -84,6 +97,7 @@ executeEvalCmd = (e) => {
 executeResetCmd = (e) => {
     print("reset");
     seq = e._currentSeq;
+    scene.my._eventCount = 0;
     System.WriteToFile(e._ackfile, "" + seq + "\n");
     e._lastline = -1;
 };
@@ -93,4 +107,5 @@ ackCmd = (e) => {
     System.WriteToFile(e._ackfile, "" + seq + "\n");
     e._lastline = seq;
 };
+
 

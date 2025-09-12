@@ -124,6 +124,11 @@ export const cmdDispatcherPlugin: ServerPlugin = {
       handleSubmit(ws, msg.payload as SubmitPayload, ctx);
     } else if (msg.type === 'drain') {
       handleDrain(ws, msg.payload as DrainPayload, ctx);
+    } else if (msg.type === 'output') {
+      const payload = msg.payload as { seq: number; cmd: string; params: unknown[] };
+      console.log('[server:cmd] output-received:', { seq: payload.seq, cmd: payload.cmd });
+      // Relay to all UI clients
+      ctx.broadcast({ type: 'output', payload });
     } else if (msg.type === 'status') {
       debug('[server:cmd] status requested:', { inflight: inflight.length, lastAck });
       ctx.send(ws, { type: 'status', payload: { inflight: inflight.length, lastAck } });

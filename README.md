@@ -29,7 +29,11 @@ Build the packages and start the server with the command dispatcher plugin:
 
 ```
 pnpm build
-node packages/algodoo-server/dist/index.js algodoo-cmd-dispatcher
+# Recommended: run the example app that wires the plugin programmatically
+pnpm --filter algodoo-example start
+
+# Alternatively: start the server binary and pass the plugin by file path
+# node packages/algodoo-server/dist/index.js "$(pwd)/packages/algodoo-cmd-dispatcher/dist/index.js"
 ```
 
 The plugin registers a HTTP path and serves a small React UI at
@@ -39,7 +43,7 @@ Programmatic usage:
 
 ```ts
 import { startServer } from 'algodoo-server';
-import { cmdDispatcherPlugin } from 'algodoo-cmd-dispatcher';
+import cmdDispatcherPlugin from 'algodoo-cmd-dispatcher';
 
 startServer({ plugins: [cmdDispatcherPlugin] });
 ```
@@ -66,7 +70,60 @@ Run the file bridge to communicate with a local Algodoo instance:
 node packages/algodoo-client/dist/index.js
 ```
 
-It writes commands to `input.txt` and reads acknowledgements from `ack.txt`.
+It writes commands to `input.txt`, reads acknowledgements from `ack.txt`, and
+relays Algodoo events from `output.txt` back to the server/UI. The client is a
+single self-contained Node bundle — you can copy `packages/algodoo-client/dist/index.js`
+next to the Algodoo files and run it without installing node_modules.
+
+Environment variables:
+
+- `SERVER_URL` (default `ws://localhost:8080`)
+- `INPUT` (default `./input.txt`)
+- `ACK` (default `./ack.txt`)
+- `OUTPUT` (default `./output.txt`)
+- `POLL_MS` (default `250`)
+- `LOG_LEVEL` (`info` or `debug`)
+
+Atomic file writes:
+
+- All file operations use a temp-file-and-rename strategy to avoid partial or
+  conflicting reads: write `*.tmp`, then `rename` to the target path.
+
+Reset on connect:
+
+- On WebSocket connect, the client performs a RESET handshake to start from a
+  clean state:
+  1. Compute `resetSeq = lastAck + 1` (or `0` if none).
+  2. Write a fresh `input.txt` containing ONLY one line: `"<resetSeq> RESET"`.
+  3. Replace `output.txt` with an empty file.
+  4. Wait until `ack.txt` contains `resetSeq`.
+  5. When acknowledged, atomically clear `ack.txt` and `output.txt`, reset
+     internal counters, then resume normal operation.
+
+Command flow (input.txt):
+
+- The server’s cmd-dispatcher assigns sequential IDs to submitted commands and
+  enqueues them to the client. The client appends lines to `input.txt` in the
+  format: `"SEQ CMD PARAMS"` (with newline), ensuring atomic writes.
+- The client monitors `ack.txt`; when it sees a higher sequence number, it logs
+  `ack: N` and removes acknowledged lines from future writes.
+
+Output flow (output.txt → UI):
+
+- Algodoo writes events into `output.txt` with one line per event:
+  `"SEQ CMD [param1, param2, ...]"`. The parameter list supports numbers,
+  booleans, and unquoted strings (e.g. `[1, true, IAmAString]`).
+- The client tails `output.txt`, parses new lines, and sends them to the server
+  as `{ type: 'output', payload: { seq, cmd, params } }`.
+- The cmd-dispatcher plugin broadcasts these to all connected UIs; the bundled
+  UI at `/cmd/` shows a live list of received outputs.
+
+Logging:
+
+- Client logs minimal high-signal events: `reset-start`, `ack: N`,
+  `command-received {seq}`, and `output-received {seq, cmd}`. Set
+  `LOG_LEVEL=debug` for detailed ticks and file operations.
+-
 
 ## Plugin API
 
