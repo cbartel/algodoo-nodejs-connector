@@ -12,8 +12,11 @@ interface EnqueueMessage {
 }
 
 type ServerMessage = EnqueueMessage;
+type ClientHello = { type: 'client.hello'; payload?: { version?: string } };
+type ClientAlive = { type: 'client.alive'; payload: { ts: number } };
+type ClientScenes = { type: 'client.scenes'; payload: { root: string; files: string[] } };
 
-const SERVER_URL = process.env.SERVER_URL || 'ws://localhost:8080';
+const SERVER_URL = process.env.SERVER_URL || 'ws://localhost:8080/_ws';
 const INPUT_PATH = process.env.INPUT || './input.txt';
 const ACK_PATH = process.env.ACK || './ack.txt';
 const OUTPUT_PATH = process.env.OUTPUT || './output.txt';
@@ -119,6 +122,17 @@ function connect() {
   ws.on('open', () => {
     debug('[client] connected to server:', SERVER_URL);
     backoff = 500;
+    // announce presence
+    const hello: ClientHello = { type: 'client.hello', payload: { version: '0.1.0' } };
+    ws.send(JSON.stringify(hello));
+    // start heartbeat
+    setInterval(() => {
+      const alive: ClientAlive = { type: 'client.alive', payload: { ts: Date.now() } };
+      ws.send(JSON.stringify(alive));
+    }, 3000);
+    // scan scenes directory and publish
+    scanAndPublishScenes(ws).catch(() => {});
+    setInterval(() => scanAndPublishScenes(ws).catch(() => {}), 15000);
     // Initiate RESET handshake: write a new input.txt containing ONLY "<lastAck+1> RESET"
     resetSeq = (lastAck ?? -1) + 1;
     isResetting = true;
@@ -208,6 +222,33 @@ async function pollOutput(ws: WebSocket): Promise<void> {
   } catch {
     // ignore missing output file
   }
+}
+
+async function scanAndPublishScenes(ws: WebSocket): Promise<void> {
+  const root = process.env.SCENES_DIR || './scenes';
+  const files: string[] = [];
+  async function walk(dir: string, rel = ''): Promise<void> {
+    let entries: any[] = [];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true }) as any;
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const name = ent.name as string;
+      const full = dir + '/' + name;
+      const relPath = rel ? rel + '/' + name : name;
+      if ((ent as any).isDirectory?.()) {
+        await walk(full, relPath);
+      } else if (name.endsWith('.phn') || name.endsWith('.phz')) {
+        files.push(relPath);
+      }
+    }
+  }
+  await walk(root);
+  const msg: ClientScenes = { type: 'client.scenes', payload: { root, files } };
+  ws.send(JSON.stringify(msg));
+  debug('[client] published scenes:', { count: files.length });
 }
 
 loadState().then(connect);

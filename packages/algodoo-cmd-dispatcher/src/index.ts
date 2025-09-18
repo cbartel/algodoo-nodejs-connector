@@ -146,3 +146,21 @@ const debug = (...args: unknown[]) => {
   if (LOG_LEVEL === 'debug') console.log(...args);
 };
 export default cmdDispatcherPlugin;
+
+// Server-side submission helper for other plugins (e.g., marblerace)
+export function serverSubmitEval(ctx: PluginContext, thyme: string): { ok: boolean; seq?: number; reason?: string } {
+  if (!algodooClient || algodooClient.readyState !== WebSocket.OPEN) {
+    debug('[server:cmd] serverSubmitEval: no algodoo client connected');
+    return { ok: false, reason: 'no-client' };
+  }
+  if (inflight.length >= 50) {
+    debug('[server:cmd] serverSubmitEval: backpressure');
+    return { ok: false, reason: 'backpressure' };
+  }
+  const seq = seqCounter.next();
+  const line = `${seq} EVAL ${serializeParams(thyme)}`;
+  inflight.push({ seq, line });
+  ctx.send(algodooClient, { type: 'enqueue', payload: { seq, line } });
+  console.log('[server:cmd] command-received (serverSubmitEval):', { seq, cmd: 'EVAL' });
+  return { ok: true, seq };
+}

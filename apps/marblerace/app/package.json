@@ -1,0 +1,22 @@
+{
+  "name": "marblerace-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --external algodoo-server marblerace-server",
+    "start": "pnpm -w -r build && node dist/index.js"
+  },
+  "dependencies": {
+    "algodoo-server": "workspace:*",
+    "marblerace-server": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "marblerace-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts src/plugin.ts src/room.ts src/orchestrator.ts --format esm,cjs --dts --clean --external algodoo-server",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "colyseus": "^0.16.4",
+    "@colyseus/ws-transport": "^0.16.3",
+    "@colyseus/schema": "^3.0.6",
+    "algodoo-server": "workspace:*",
+    "marblerace-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}

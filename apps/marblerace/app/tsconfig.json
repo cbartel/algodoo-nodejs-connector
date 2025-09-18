@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.json",
+  "include": ["src/**/*"],
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "references": [
+    { "path": "../server" },
+    { "path": "../web" },
+    { "path": "../protocol" },
+    { "path": "../ui-kit" }
+  ]
+}
+

@@ -10,6 +10,9 @@ _currentSplit = [];
 _parsedCmd = "";
 _init = false;
 
+onSpawn = (e)=> {
+  Sim.running = true;
+};
 
 postStep = (e) => {
   e.this._init ? {} : {
@@ -24,24 +27,24 @@ postStep = (e) => {
   };
 
   ((Sim.tick % e.this._pollEvery) == 0) ? {
-      e.this.pollCommands(e.this);
+      e.this._pollCommands(e.this);
   } : {};
 };
 
-pollCommands = (e) => {
+_pollCommands = (e) => {
     t = System.ReadWholeFile(e._infile);
     (t == nil) ? {} : {
         lines = string.split(t, "\n");
         for(string.length(lines), (i) => {
             (string.length(lines(i)) == 0) ? {} : {
                 e._currentLine = lines(i);
-                e.readLine(e);
+                e._readLine(e);
             };
         })
     }
 };
 
-readLine = (e) => {
+_readLine = (e) => {
     split = string.split(e._currentLine, " ");
     e._currentSplit = split;
     seq = math.toInt(split(0));
@@ -51,26 +54,26 @@ readLine = (e) => {
 
     (e._lastline >= seq) ? {} : {
         (e._currentCmd == "PRINT") ? {
-            e.executePrintCmd(e);
+            e._executePrintCmd(e);
         } : {};
 
         (e._currentCmd == "EVAL") ? {
-            e.executeEvalCmd(e);
+            e._executeEvalCmd(e);
         } : {};
 
         (e._currentCmd == "RESET") ? {
-            e.executeResetCmd(e);
+            e._executeResetCmd(e);
         } : {
-            e.ackCmd(e);
+            e._ackCmd(e);
         };
     }
 };
 
-executePrintCmd = (e) => {
+_executePrintCmd = (e) => {
     print(e._currentSplit(2));
 };
 
-executeEvalCmd = (e) => {
+_executeEvalCmd = (e) => {
   parts = e._currentSplit;
   n = string.length(parts);
   start = 2;
@@ -94,7 +97,7 @@ executeEvalCmd = (e) => {
   geval(cmd);
 };
 
-executeResetCmd = (e) => {
+_executeResetCmd = (e) => {
     print("reset");
     seq = e._currentSeq;
     scene.my._eventCount = 0;
@@ -102,7 +105,7 @@ executeResetCmd = (e) => {
     e._lastline = -1;
 };
 
-ackCmd = (e) => {
+_ackCmd = (e) => {
     seq = e._currentSeq;
     System.WriteToFile(e._ackfile, "" + seq + "\n");
     e._lastline = seq;
