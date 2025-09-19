@@ -1,5 +1,5 @@
 import type { Player, AlgodooCommand, AlgodooEvent } from 'marblerace-protocol';
-import { submitEval, submitEvalAsync } from "./transport";
+import { submitEval, submitEvalAsync, requestClientReset } from "./transport";
 
 export type OrchestratorCallbacks = {
   onEvent: (ev: AlgodooEvent) => void;
@@ -35,6 +35,9 @@ export class Orchestrator {
     this.log('loadStage', stageId);
     const filename = stageId.replace(/.phz/g, '');
     await submitEvalAsync(`Scene.Open(\"${filename}\");`, { timeoutMs: 10000 });
+    // After successfully opening a scene, request a transport reset so
+    // algodoo-client clears input/output and restarts seq counters.
+    requestClientReset();
   }
 
   /**
@@ -61,35 +64,45 @@ export class Orchestrator {
     const radius = player.config.radius.toFixed(7);
     // TODO: submit Thyme to spawn a single marble tagged with player.id
     const thyme = `
-    marble = scene.addCircle({
-        restitution := 0.50000000;
-        killer := true;
-        immortal := true;
-        area := 3.1415927;
-        collideSet := 63;
-        drawBorder := false;
-        friction := 0.0000000;
-        color := [${r}, ${g}, ${b}, 1.0000000];
-        onHitByLaser := (e)=>{};
-        drawCake := false;
-        pos := scene.my.spawn;
-        density := 2.0000000;
-        radius := ${radius};
-        _name := "${player.name}";
-        layer := 0
-    });
-    scene.addPen({
-        pos := marble.pos;
-        geom := marble.geomID;
-        relPoint := [0.0000000, 0.0000000];
-        followGeometry := true;
-        opaqueBorders := true;
-        size := 0.039062500;
-        color := [${r}, ${g}, ${b}, 1.0000000];
-        fadeTime := 0.30000001;
-        zDepth := 106.00000;
-        layer := 0
-    });
+    spawnMarble = () => {
+        marble = scene.addCircle({
+            restitution := 0.50000000;
+            killer := true;
+            immortal := true;
+            area := 3.1415927;
+            collideSet := 63;
+            drawBorder := false;
+            friction := 0.0000000;
+            color := [${r}, ${g}, ${b}, 1.0000000];
+            onHitByLaser := (e)=>{};
+            drawCake := false;
+            pos := scene.my.spawn;
+            density := 2.0000000;
+            radius := ${radius};
+            _name := "${player.id}";
+            layer := 0
+        });
+        scene.addPen({
+            pos := marble.pos;
+            geom := marble.geomID;
+            relPoint := [0.0000000, 0.0000000];
+            followGeometry := true;
+            opaqueBorders := true;
+            size := 0.039062500;
+            color := [${r}, ${g}, ${b}, 1.0000000];
+            fadeTime := 0.30000001;
+            zDepth := 106.00000;
+            layer := 0
+        });
+    };
+    scene.my.marblecount > 1 ? {
+        for(scene.my.marblecount, (i) => {
+            spawnMarble();
+        });
+    } : { 
+        spawnMarble(); 
+    };
+    
     `
       const compact = thyme.replace(/\s+/g, ' ').trim();
       await submitEvalAsync(compact);
@@ -118,7 +131,11 @@ export class Orchestrator {
    */
   async go(): Promise<void> {
     this.log('go');
-    // TODO: submit Thyme to start the race and wire finish triggers.
+    const thyme = `
+        scene.removeEntity(scene.my.startblock);
+    `
+      const compact = thyme.replace(/\s+/g, ' ').trim();
+      await submitEvalAsync(compact);
   }
 
   /**
@@ -132,13 +149,13 @@ export class Orchestrator {
   async resetStage(stageId: string): Promise<void> {
     this.log('resetStage', stageId);
     void stageId;
-    // TODO: submit Thyme to reset the scene and clear artifacts.
+    return this.loadStage(stageId);
   }
 
   // Adapter entrypoint for receiving low-level events from Algodoo runtime.
   // Wire the transport to invoke this when events arrive.
   handleEvent(ev: AlgodooEvent): void {
-    this.log('handleEvent', ev.type);
+    this.log('handleEvent', ev.type, ev.payload);
     this.cb.onEvent(ev);
   }
 }

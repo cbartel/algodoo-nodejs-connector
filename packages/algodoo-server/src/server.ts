@@ -209,6 +209,7 @@ export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOp
           }
         } else if ((msg as any)?.type === 'output') {
           if (algodooClient !== ws) algodooClient = ws;
+          try { srvDebug('ws:output', { seq: (msg as any)?.payload?.seq, cmd: (msg as any)?.payload?.cmd }); } catch {}
         }
         for (const plugin of plugins) plugin.onMessage?.(ws, msg, ctx);
       });

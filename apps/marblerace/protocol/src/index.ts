@@ -73,8 +73,14 @@ export const defaultMarbleConfig: MarbleConfig = {
 };
 
 // Points table: index 0 -> 1st place points
-export type PointsTable = number[];
+export type PointsTable = number[]; // legacy per-placement points table
 export const defaultPointsTable: PointsTable = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+
+// New tiered points configuration: apply in order; e.g.
+// [{ count: 3, points: 10 }, { count: 5, points: 7 }, { count: 2, points: 5 }]
+// → placements 1..3 get 10; 4..8 get 7; 9..10 get 5; others 0.
+export type PointsTier = { count: number; points: number };
+export type PointsConfig = PointsTier[];
 
 export type StageConfig = {
   id: string; // maps to Algodoo scene identifier

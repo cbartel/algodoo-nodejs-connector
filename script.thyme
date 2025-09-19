@@ -12,6 +12,7 @@ _init = false;
 
 onSpawn = (e)=> {
   Sim.running = true;
+  scene.my.marblecount = 10;
 };
 
 postStep = (e) => {

@@ -10,7 +10,7 @@ import {
   AlgodooEvent,
 } from 'marblerace-protocol';
 import { Orchestrator } from './orchestrator.js';
-import { RaceStateSchema, PlayerSchema, StageSchema, ResultSchema, TickerSchema } from './schema.js';
+import { RaceStateSchema, PlayerSchema, StageSchema, ResultSchema, TickerSchema, PointsTierSchema } from './schema.js';
 
 type ClientData = {
   isAdmin?: boolean;
@@ -250,9 +250,18 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.state.globalPhase = 'lobby';
     this.state.seed = '';
     // keep current perStageTimeoutMs; not set from admin
-    // points table
+    // points table (legacy) or tiers (new)
     this.state.pointsTable.splice(0, this.state.pointsTable.length);
     (data.pointsTable && data.pointsTable.length ? data.pointsTable : defaultPointsTable).forEach((n) => this.state.pointsTable.push(n));
+    // tiers
+    (this.state as any).pointsTiers?.splice?.(0, (this.state as any).pointsTiers.length ?? 0);
+    const tiers = Array.isArray((data as any)?.tiers) ? (data as any).tiers as Array<{ count: number; points: number }> : [];
+    for (const t of tiers) {
+      const tier = new PointsTierSchema();
+      tier.count = Math.max(0, Math.min(1000, Number(t?.count ?? 0)) | 0);
+      tier.points = Math.max(0, Math.min(100000, Number(t?.points ?? 0)) | 0);
+      if (tier.count > 0 && tier.points >= 0) (this.state as any).pointsTiers?.push?.(tier);
+    }
     // reset players progress
     this.state.players.forEach((p) => {
       p.totalPoints = 0;
@@ -350,15 +359,38 @@ export class RaceRoom extends Room<RaceStateSchema> {
     } else if (ev.type === 'marble.finish') {
       if (this.state.stagePhase !== 'running') return;
       const pid = ev.payload.playerId;
-      if (this.finishOrder.includes(pid)) return;
+      // Count every finished marble; allow multiple finishes per player
       this.finishOrder.push(pid);
       const name = this.state.players.get(pid)?.name ?? pid;
       this.pushTicker('finish', `${name} finished #${this.finishOrder.length}`);
-      // If all finished early, short-circuit timeout
-      const activeIds = Array.from(this.state.players.keys());
-      if (this.finishOrder.length >= activeIds.length) {
-        this.endStage(false);
+      // Award points immediately for this finisher based on placement
+      const placement = this.finishOrder.length;
+      const points = this.pointsForPlacement(placement);
+      const p = this.state.players.get(pid);
+      if (p) {
+        const stageIdx = this.state.stageIndex;
+        let res = p.results[stageIdx];
+        if (!res) {
+          res = new ResultSchema();
+          res.stageIndex = stageIdx;
+          res.placement = placement; // first placement is the best so far
+          res.points = 0;
+          res.finishedAt = 0;
+          p.results[stageIdx] = res;
+        }
+        // Keep the best (lowest) placement and accumulate points for the stage
+        if (!res.placement || placement < res.placement) res.placement = placement;
+        res.points = (res.points | 0) + points;
+        res.finishedAt = Date.now();
+        p.totalPoints += points;
+        if (placement && (p.bestPlacement === 0 || placement < p.bestPlacement)) {
+          p.bestPlacement = placement;
+          p.earliestBestStageIndex = stageIdx;
+        }
       }
+      // Short-circuit end only when all awardable points have been assigned
+      const required = this.requiredFinishers();
+      if (required > 0 && this.finishOrder.length >= required) this.endStage(false);
     } else if (ev.type === 'stage.timeout') {
       if (this.state.stagePhase === 'running') this.endStage(true);
     } else if (ev.type === 'stage.reset') {
@@ -411,26 +443,20 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.setStagePhase('stage_finished');
     const stageIdx = this.state.stageIndex;
     const players = Array.from(this.state.players.values());
-    const pointsTable = this.state.pointsTable;
 
-    // Award points and mark DNFs
-    const finishMap = new Map<string, number>();
-    this.finishOrder.forEach((pid, i) => finishMap.set(pid, i + 1));
-
+    // Ensure every player has a result entry; fill DNFs with 0 without double-adding points
+    const finishedSet = new Set(this.finishOrder);
     for (const p of players) {
-      const placement = finishMap.get(p.id) ?? 0;
-      const points = placement ? (pointsTable[placement - 1] ?? 0) : 0;
+      const existing = p.results[stageIdx];
+      if (existing && (existing.placement || existing.placement === 0)) continue;
       const res = new ResultSchema();
       res.stageIndex = stageIdx;
-      res.placement = placement;
-      res.points = points;
-      res.finishedAt = placement ? Date.now() : 0;
+      res.placement = finishedSet.has(p.id) ? (this.finishOrder.indexOf(p.id) + 1) : 0;
+      res.points = res.placement ? this.pointsForPlacement(res.placement) : 0;
+      res.finishedAt = res.placement ? Date.now() : 0;
       p.results[stageIdx] = res;
-      p.totalPoints += points;
-      if (placement && (p.bestPlacement === 0 || placement < p.bestPlacement)) {
-        p.bestPlacement = placement;
-        p.earliestBestStageIndex = stageIdx;
-      }
+      // totalPoints is only incremented for non-finished players here (should be 0)
+      if (res.points > 0) p.totalPoints += res.points; // safeguard
     }
     const top = [...players].sort((a, b) => comparePlayers(
       // transform PlayerSchema to protocol-like structure for comparator
@@ -478,6 +504,46 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.state.ticker.unshift(item);
     while (this.state.ticker.length > 10) this.state.ticker.pop();
   }
+
+  // Public entry from plugin/orchestrator to inject events originating from Algodoo runtime
+  public ingestEventFromAlgodoo(ev: AlgodooEvent) {
+    // Route through orchestrator to keep a single path (orchestrator -> room)
+    // This ensures any future side effects in orchestrator are preserved.
+    this.orchestrator.handleEvent(ev);
+  }
+
+  private pointsForPlacement(placement: number): number {
+    if (placement <= 0) return 0;
+    // Prefer tiered config if present
+    let idx = placement;
+    const ptsTiers: any[] = (this.state as any).pointsTiers || [];
+    if (ptsTiers.length > 0) {
+      for (let i = 0, acc = 0; i < ptsTiers.length; i++) {
+        const t = ptsTiers[i];
+        const from = acc + 1;
+        const to = acc + (t.count | 0);
+        if (idx >= from && idx <= to) return t.points | 0;
+        acc = to;
+      }
+      return 0;
+    }
+    // Fallback to legacy table by placement index
+    const n = this.state.pointsTable[placement - 1];
+    return Number(n ?? 0) | 0;
+  }
+
+  private requiredFinishers(): number {
+    const ptsTiers: any[] = (this.state as any).pointsTiers || [];
+    if (ptsTiers.length > 0) {
+      return ptsTiers.reduce((sum, t) => sum + ((t?.count|0) > 0 ? (t.count|0) : 0), 0);
+    }
+    const legacy = (this.state.pointsTable?.length ?? 0) | 0;
+    if (legacy > 0) return legacy;
+    // Fallback: if no config, require all spawned players to finish
+    let spawned = 0;
+    this.state.players.forEach((p) => { if ((p as any).spawned) spawned++; });
+    return spawned || 0;
+  }
 }
 
 // External integrations: update helpers callable from plugin
@@ -493,5 +559,12 @@ export function updateScenes(files: string[]) {
     room.state.scenes.splice(0, room.state.scenes.length);
     for (const f of files) room.state.scenes.push(f);
     room.pushTicker('scenes', `${files.length} scene(s) detected`);
+  }
+}
+
+// Broadcast an Algodoo event from plugin to all rooms via their orchestrators
+export function dispatchAlgodooEvent(ev: AlgodooEvent) {
+  for (const room of RaceRoom.rooms) {
+    try { room.ingestEventFromAlgodoo(ev); } catch {}
   }
 }

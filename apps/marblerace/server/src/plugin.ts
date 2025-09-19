@@ -6,12 +6,16 @@ import http from 'http';
 import type { ServerPlugin, PluginContext, ClientMessage } from 'algodoo-server';
 import { Server as ColyseusServer } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
-import { RaceRoom, updateClientAlive, updateScenes } from './room.js';
+import { RaceRoom, updateClientAlive, updateScenes, dispatchAlgodooEvent } from './room.js';
 import { wireTransport } from './transport.js';
 
 const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:plugin]', ...args);
 const debug = (...args: unknown[]) => { if (LOG_LEVEL === 'debug') console.log('[mr:plugin]', ...args); };
+
+// Track output sequence stats from algodoo-client
+let lastOutputSeqReceived = -1;
+let outputSeqGaps = 0;
 
 function resolveWebDir(): string {
   const candidates: string[] = [];
@@ -74,6 +78,37 @@ function safeJoin(baseDir: string, urlPath: string): string | null {
   return resolved;
 }
 
+// Map raw algodoo-client output (cmd, params[]) to a canonical AlgodooEvent
+function mapOutputToEvent(cmd: string, params: any): import('marblerace-protocol').AlgodooEvent | null {
+  const lower = cmd.toLowerCase();
+  const arr = Array.isArray(params) ? params : [];
+  // Generic aliases
+  if (lower === 'ready') return { type: 'stage.ready', payload: { stageId: String(arr[0] ?? '') } };
+  if (lower === 'finish') return { type: 'marble.finish', payload: { playerId: String(arr[0] ?? ''), order: Number(arr[1] ?? 0) || 0, ts: Number(arr[2] ?? Date.now()) } };
+  if (lower === 'timeout') return { type: 'stage.timeout', payload: { stageId: String(arr[0] ?? ''), ts: Number(arr[1] ?? Date.now()) } };
+  if (lower === 'reset') return { type: 'stage.reset', payload: { stageId: String(arr[0] ?? '') } };
+  if (lower === 'stage.ready' || lower === 'stage_ready' || lower === 'ev_stage_ready') {
+    const stageId = String(arr[0] ?? '');
+    return { type: 'stage.ready', payload: { stageId } };
+  }
+  if (lower === 'marble.finish' || lower === 'marble_finish' || lower === 'ev_marble_finish') {
+    const playerId = String(arr[0] ?? '');
+    const order = Number(arr[1] ?? 0) || 0;
+    const ts = Number(arr[2] ?? Date.now());
+    return { type: 'marble.finish', payload: { playerId, order, ts } };
+  }
+  if (lower === 'stage.timeout' || lower === 'stage_timeout' || lower === 'ev_stage_timeout') {
+    const stageId = String(arr[0] ?? '');
+    const ts = Number(arr[1] ?? Date.now());
+    return { type: 'stage.timeout', payload: { stageId, ts } };
+  }
+  if (lower === 'stage.reset' || lower === 'stage_reset' || lower === 'ev_stage_reset') {
+    const stageId = String(arr[0] ?? '');
+    return { type: 'stage.reset', payload: { stageId } };
+  }
+  return null;
+}
+
 export const marbleRacePlugin: ServerPlugin = {
   name: 'marblerace',
   // Handle all three UI paths directly
@@ -105,6 +140,10 @@ export const marbleRacePlugin: ServerPlugin = {
     const t = msg?.type || '';
     if (t === 'client.hello') {
       log('algodoo-client hello');
+      // Reset output sequence tracking on new client session
+      lastOutputSeqReceived = -1;
+      outputSeqGaps = 0;
+      debug('output seq tracking reset on hello');
       updateClientAlive(Date.now());
     } else if (t === 'client.alive') {
       const ts = Number((msg as any)?.payload?.ts ?? Date.now());
@@ -112,6 +151,36 @@ export const marbleRacePlugin: ServerPlugin = {
     } else if (t === 'client.scenes') {
       const files = Array.isArray((msg as any)?.payload?.files) ? (msg as any).payload.files as string[] : [];
       updateScenes(files);
+    } else if (t === 'output') {
+      try {
+        const payload: any = (msg as any)?.payload || {};
+        const seq: number = Number(payload.seq ?? -1);
+        const cmd: string = String(payload.cmd || '').toLowerCase();
+        const p: any[] = Array.isArray(payload.params) ? payload.params : [];
+        debug('output raw', { seq, cmd, params: p });
+        // Log and track sequence continuity; reset if seq appears to restart
+        if (Number.isFinite(seq)) {
+          if (seq === 0 && lastOutputSeqReceived !== -1) {
+            debug('output seq restart detected; resetting counters');
+            lastOutputSeqReceived = -1;
+            outputSeqGaps = 0;
+          }
+          if (lastOutputSeqReceived >= 0 && seq > lastOutputSeqReceived + 1) {
+            const missedFrom = lastOutputSeqReceived + 1;
+            const missedTo = seq - 1;
+            outputSeqGaps += (missedTo - missedFrom + 1);
+            log('output gap detected', { last: lastOutputSeqReceived, received: seq, missedFrom, missedTo, totalGaps: outputSeqGaps });
+          } else if (lastOutputSeqReceived >= 0 && seq <= lastOutputSeqReceived) {
+            log('output out-of-order/duplicate', { last: lastOutputSeqReceived, received: seq });
+          }
+          lastOutputSeqReceived = Math.max(lastOutputSeqReceived, seq);
+        }
+        const ev = mapOutputToEvent(cmd, p);
+        debug('output mapped', ev);
+        if (ev) dispatchAlgodooEvent(ev);
+      } catch (e) {
+        debug('output parse error', String(e));
+      }
     }
   },
   handleHttp(req: IncomingMessage, res: ServerResponse, ctx: PluginContext) {
@@ -141,7 +210,7 @@ export const marbleRacePlugin: ServerPlugin = {
         const s = ctx.getStatus ? ctx.getStatus() : { hasClient: false, inflight: 0, lastAck: -1, nextSeq: 0, clientCount: 0 };
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ ok: true, name: 'marblerace', algodoo: s }));
+        res.end(JSON.stringify({ ok: true, name: 'marblerace', algodoo: s, output: { lastSeq: lastOutputSeqReceived, gaps: outputSeqGaps } }));
         return;
       }
       // config endpoint: expose Colyseus URL for the web client

@@ -4,11 +4,13 @@ type SubmitEvalFn = (thyme: string) => { ok: boolean };
 
 let boundSubmit: SubmitEvalFn | null = null;
 let boundSubmitAsync: ((thyme: string, opts?: { timeoutMs?: number }) => Promise<{ seq: number }>) | null = null;
+let boundBroadcast: ((message: unknown) => void) | null = null;
 
 export function wireTransport(ctx: PluginContext): void {
   // Bind to the server instance that created this plugin
   boundSubmit = (thyme: string) => ctx.submitEval(thyme);
   boundSubmitAsync = (thyme: string, opts?: { timeoutMs?: number }) => ctx.submitEvalAsync(thyme, opts);
+  boundBroadcast = (message: unknown) => ctx.broadcast(message);
 }
 
 export function submitEval(thyme: string): boolean {
@@ -25,4 +27,9 @@ export async function submitEvalAsync(thyme: string, opts?: { timeoutMs?: number
   } catch {
     return false;
   }
+}
+
+export function requestClientReset(): void {
+  if (!boundBroadcast) return;
+  try { boundBroadcast({ type: 'reset' }); } catch {}
 }

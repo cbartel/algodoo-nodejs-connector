@@ -148,8 +148,28 @@ export default function Game() {
   const lobbyOpen = !!state?.lobbyOpen;
   const inCountdown = state?.stagePhase === 'countdown';
   const inPrep = state?.stagePhase === 'prep';
+  const inRunning = state?.stagePhase === 'running';
+  const inFinished = state?.stagePhase === 'stage_finished';
   const canConfigure = (inPrep || inCountdown) && !me?.spawned;
   const locked = !canConfigure;
+
+  const stageIdx = typeof state?.stageIndex === 'number' ? state.stageIndex : -1;
+  const myStagePoints = (me as any)?.results?.[stageIdx]?.points ?? 0;
+  const myTotal = (me as any)?.totalPoints ?? 0;
+  const currentStageName = stageIdx >= 0 ? (state?.stages?.[stageIdx]?.name || state?.stages?.[stageIdx]?.id) : '-';
+  // Score FX when total increases
+  const [scoreFx, setScoreFx] = useState(false);
+  const lastTotalRef = useRef<number>(0);
+  useEffect(() => {
+    const prev = lastTotalRef.current;
+    if (myTotal > prev) {
+      setScoreFx(true);
+      const t = setTimeout(() => setScoreFx(false), 1200);
+      lastTotalRef.current = myTotal;
+      return () => clearTimeout(t);
+    }
+    lastTotalRef.current = myTotal;
+  }, [myTotal]);
 
   useEffect(() => {
     if (!me && inLobby && lobbyOpen) nameInputRef.current?.focus();
@@ -239,7 +259,7 @@ export default function Game() {
   return (
     <div style={{ padding: 16, maxWidth: 960, margin: '0 auto', position: 'relative' }}>
       <style>{`
-        .mr-header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+        .mr-header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
         .mr-right{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
         .mr-greeting{color:#9df;font-weight:700;display:flex;align-items:center;gap:8px}
         .mr-grid{display:grid;gap:12px;grid-template-columns:1fr}
@@ -248,6 +268,25 @@ export default function Game() {
         .mr-fill{height:100%;background:linear-gradient(90deg,#49f,#9cf);box-shadow:0 0 0 2px #036 inset}
         .mr-pts{font-size:12px;color:#9df}
         .mr-alloc{display:grid;gap:8px}
+        .mr-prepare{display:flex;align-items:center;gap:16px}
+        .mr-preview{width:96px;height:96px;border-radius:50%;border:4px solid #333}
+        .mr-row{display:grid;grid-template-columns:140px 1fr 120px;gap:8px;align-items:center}
+        .mr-value{color:#9df}
+        .mr-flow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0}
+        .mr-dot{width:10px;height:10px;border-radius:50%;border:3px solid #6cf;display:inline-block}
+        .mr-dot.active{background:#6cf}
+        .mr-fx{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+        .mr-piece{position:absolute;top:-10px;width:8px;height:14px;opacity:0.9}
+        @keyframes mrFall{0%{transform:translateY(-10px) rotate(0deg)}100%{transform:translateY(120vh) rotate(720deg)}}
+        @media(max-width:480px){
+          h2{font-size:18px}
+          .mr-right{gap:4px}
+          .mr-bar{height:10px}
+          .mr-prepare{flex-direction:column;align-items:stretch;gap:12px}
+          .mr-preview{width:64px;height:64px;border-width:3px}
+          .mr-row{grid-template-columns:1fr;gap:6px}
+          .mr-row .mr-value{justify-self:end}
+        }
       `}</style>
       <header className="mr-header">
         <h2 style={{ margin: 0 }}>Marble Race</h2>
@@ -261,8 +300,45 @@ export default function Game() {
           <Badge>Global: {state?.globalPhase}</Badge>
           <Badge>Stage: {state?.stagePhase}</Badge>
           <Badge>Stage {typeof state?.stageIndex === 'number' ? state.stageIndex + 1 : '-'} / {state?.stages?.length || 0}</Badge>
+          {me && (
+            <>
+              <Badge>Stage Pts: {myStagePoints}</Badge>
+              <Badge>Total: {myTotal}</Badge>
+            </>
+          )}
         </div>
       </header>
+
+      <div className="mr-flow">
+        {['Lobby','Prep','Countdown','Running','Finished'].map((label, i) => {
+          const active = (i===0&&inLobby)||(i===1&&(inIntermission&&inPrep))||(i===2&&inCountdown)||(i===3&&inRunning)||(i===4&&inFinished);
+          return (
+            <div key={label} style={{ display:'flex',alignItems:'center',gap:6 }}>
+              <span className={`mr-dot ${active ? 'active' : ''}`} />
+              <span style={{ color: active ? '#fff' : '#9df' }}>{label}</span>
+              {i<4 && <span style={{ color:'#555' }}>→</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {scoreFx && (
+        <div className="mr-fx">
+          {Array.from({ length: 28 }).map((_, i) => {
+            const left = Math.random() * 100;
+            const delay = Math.random() * 0.2;
+            const dur = 0.9 + Math.random() * 0.8;
+            const colors = ['#fc6','#6cf','#f66','#6f6','#9df'];
+            const color = colors[i % colors.length];
+            const style: React.CSSProperties = {
+              left: `${left}vw`,
+              background: color,
+              animation: `mrFall ${dur}s ease-in ${delay}s forwards`,
+            };
+            return <span key={i} className="mr-piece" style={style} />;
+          })}
+        </div>
+      )}
 
       {waiting ? (
         <Panel title="Waiting">
@@ -295,8 +371,8 @@ export default function Game() {
         ) : canConfigure ? (
           <div className="mr-grid">
             <Panel title="Prepare Your Marble">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                <div style={{ width: 96, height: 96, borderRadius: '50%', border: '4px solid #333', background: colorHex }} />
+              <div className="mr-prepare">
+                <div className="mr-preview" style={{ background: colorHex }} />
                 <div style={{ display: 'grid', gap: 8, alignItems: 'center', width: '100%' }}>
                   <label style={{ fontSize: 12, color: '#6cf' }}>Color</label>
                   <input
@@ -327,7 +403,7 @@ export default function Game() {
                       const value = (alloc as any)[key];
                       const val = levelOf(key as any);
                       return (
-                        <div key={key} style={{ display: 'grid', gridTemplateColumns: '140px 1fr 120px', gap: 8, alignItems: 'center' }}>
+                        <div key={key} className="mr-row">
                           <div style={{ color: '#6cf' }}>{label}</div>
                           <div>
                             <div className="mr-bar"><div className="mr-fill" style={{ width: `${(value / MAX_PER_STAT) * 100}%` }} /></div>
@@ -336,7 +412,7 @@ export default function Game() {
                               <Button disabled={usedPoints >= TOTAL_POINTS} onClick={() => setAllocClamped(key, value + 1)}>+1</Button>
                             </div>
                           </div>
-                          <div style={{ color: '#9df' }}>
+                          <div className="mr-value">
                             {key === 'radius' ? val.toFixed(3) : key === 'density' ? val.toFixed(1) : val.toFixed(2)}
                           </div>
                         </div>
@@ -357,9 +433,7 @@ export default function Game() {
               <div style={{ display: 'grid', gap: 8 }}>
                 <div>Players in lobby: {playersCount}</div>
                 <div>Phase: {inPrep ? 'Preparation' : inCountdown ? 'Countdown' : state?.stagePhase}</div>
-                {locked && (
-                  <div style={{ color: '#fc6' }}>Configuration locked. {me?.spawned ? 'You have spawned.' : state?.stagePhase === 'running' ? 'Race started.' : ''}</div>
-                )}
+                <div>Stage: {currentStageName}</div>
               </div>
             </Panel>
           </div>
@@ -397,15 +471,7 @@ export default function Game() {
               </div>
             </>
           )}
-          <Panel title="Race HUD">
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div>Stage: {state?.stageIndex >= 0 ? (state?.stages?.[state.stageIndex]?.name || state?.stages?.[state.stageIndex]?.id) : '-'}</div>
-              <div>Status: {state?.stagePhase}</div>
-              {locked && (
-                <div style={{ color: '#fc6' }}>Configuration locked. Focus on the race!</div>
-              )}
-            </div>
-          </Panel>
+          {/* Race HUD removed per spec */}
           {state?.stagePhase === 'stage_finished' && (
             <Panel title="Stage Results">
               <ol style={{ margin: 0, paddingLeft: 18 }}>

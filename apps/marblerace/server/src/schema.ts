@@ -28,6 +28,11 @@ export class ResultSchema extends Schema {
   @type('int64') finishedAt = 0; // 0 => undefined
 }
 
+export class PointsTierSchema extends Schema {
+  @type('int16') count = 0;   // how many finishers get this tier
+  @type('int16') points = 0;  // points awarded per finisher in this tier
+}
+
 export class PlayerSchema extends Schema {
   @type('string') id = '';
   @type('string') name = '';
@@ -53,7 +58,10 @@ export class RaceStateSchema extends Schema {
   @type('string') stagePhase: 'loading' | 'prep' | 'countdown' | 'running' | 'stage_finished' = 'loading';
   @type('string') seed = '';
   @type('int32') perStageTimeoutMs = 120000;
+  // Legacy per-placement table for backward compatibility
   @type(['int16']) pointsTable = new ArraySchema<number>();
+  // New tiered points configuration
+  @type([PointsTierSchema]) pointsTiers = new ArraySchema<PointsTierSchema>();
   @type('boolean') autoAdvance = true;
   @type('boolean') lobbyOpen = false;
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();

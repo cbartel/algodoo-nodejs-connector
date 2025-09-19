@@ -19,7 +19,7 @@ export default function Dashboard() {
   }, []);
 
   const standings = useMemo(() => {
-    if (!state) return [];
+    if (!state) return [] as any[];
     const playersArr: any[] = [];
     const players = (state as any).players;
     if (players && typeof players.forEach === 'function') {
@@ -28,14 +28,23 @@ export default function Dashboard() {
       playersArr.push(...Object.values(players ?? {}));
     }
     const safeName = (n: any) => (typeof n === 'string' ? n : '');
+    const stageCount = Number(state?.stages?.length || 0);
     return playersArr
-      .map((p) => ({
-        name: p?.name,
-        total: p?.totalPoints ?? 0,
-        best: p?.bestPlacement || 9999,
-        earliest: (p?.earliestBestStageIndex ?? -1) >= 0 ? p.earliestBestStageIndex : 9999,
-      }))
-      .sort((a, b) => (b.total - a.total) || (a.best - b.best) || (a.earliest - b.earliest) || safeName(a.name).localeCompare(safeName(b.name)));
+      .map((p) => {
+        const perStage: number[] = [];
+        for (let i = 0; i < stageCount; i++) {
+          const r = p?.results?.[i];
+          perStage.push(Number(r?.points ?? 0));
+        }
+        return {
+          name: p?.name,
+          total: Number(p?.totalPoints ?? 0),
+          best: p?.bestPlacement || 9999,
+          earliest: (p?.earliestBestStageIndex ?? -1) >= 0 ? p.earliestBestStageIndex : 9999,
+          perStage,
+        };
+      })
+      .sort((a: any, b: any) => (b.total - a.total) || (a.best - b.best) || (a.earliest - b.earliest) || safeName(a.name).localeCompare(safeName(b.name)));
   }, [state]);
 
   const roomId = state?.roomId;
@@ -71,8 +80,8 @@ export default function Dashboard() {
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 12 }}>
         <Panel title="Standings">
           <Table
-            headers={["#", "Player", "Points", "Best", "Earliest"]}
-            rows={standings.map((p, i) => [i+1, p.name, p.total, p.best === 9999 ? '-' : p.best, p.earliest === 9999 ? '-' : (p.earliest + 1)])}
+            headers={["#", "Player", ...Array.from({ length: state?.stages?.length || 0 }).map((_, i) => `S${i+1}`), "Total"]}
+            rows={standings.map((p: any, i: number) => [i+1, p.name, ...(p.perStage || []), p.total])}
           />
         </Panel>
         <Panel title="Events">

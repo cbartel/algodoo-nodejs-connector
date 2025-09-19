@@ -12,6 +12,8 @@ interface EnqueueMessage {
 }
 
 type ServerMessage = EnqueueMessage;
+type ResetMessage = { type: 'reset' };
+type IncomingServerMessage = ServerMessage | ResetMessage;
 type ClientHello = { type: 'client.hello'; payload?: { version?: string } };
 type ClientAlive = { type: 'client.alive'; payload: { ts: number } };
 type ClientScenes = { type: 'client.scenes'; payload: { root: string; files: string[] } };
@@ -20,6 +22,7 @@ const SERVER_URL = process.env.SERVER_URL || 'ws://localhost:8080/_ws';
 const INPUT_PATH = process.env.INPUT || './input.txt';
 const ACK_PATH = process.env.ACK || './ack.txt';
 const OUTPUT_PATH = process.env.OUTPUT || './output.txt';
+const OUTPUT_POS_PATH = process.env.OUTPUT_POS || './output.pos';
 const POLL_MS = Number(process.env.POLL_MS || 250);
 
 let inflight: EnqueueMsg[] = [];
@@ -28,6 +31,7 @@ let isResetting = false;
 let resetSeq: number | null = null;
 const pending: EnqueueMsg[] = [];
 let lastOutputSeq = -1;
+let restartArmed = true; // allow a single on-the-fly restart detection
 
 async function writeAtomic(path: string, data: string): Promise<void> {
   const tmp = path + '.tmp';
@@ -49,10 +53,17 @@ async function loadState() {
     const last = lines[lines.length - 1];
     lastAck = last ? Number(last) : -1;
   } catch {}
+  try {
+    const posContent = await fs.readFile(OUTPUT_POS_PATH, 'utf8');
+    const pos = Number((posContent || '').trim());
+    if (Number.isFinite(pos)) lastOutputSeq = pos;
+  } catch {}
   inflight = inflight.filter((i) => i.seq > lastAck);
   debug('[client] loaded state:', { inflight: inflight.length, lastAck });
   await writeInput();
 }
+
+// No external sync: we rely on explicit reset to clear output and position.
 
 async function writeInput() {
   // If resetting, ensure ONLY the reset line is present in the input file
@@ -84,13 +95,14 @@ async function pollAck(ws: WebSocket): Promise<void> {
         } catch (e) {
           console.log('[client] failed clearing ack.txt (continuing):', String(e));
         }
-        // Also clear output.txt and reset its sequence tracker
+        // Fresh output: clear file and reset position so new seq start at 0 is accepted
         try {
           await writeAtomic(OUTPUT_PATH, '');
+          await writeAtomic(OUTPUT_POS_PATH, '-1');
           lastOutputSeq = -1;
-          console.log('[client] output.txt cleared for fresh start:', { path: OUTPUT_PATH });
+          console.log('[client] output cleared after RESET ACK; position reset');
         } catch (e) {
-          console.log('[client] failed clearing output.txt (continuing):', String(e));
+          console.log('[client] failed preparing fresh output after ACK (continuing):', String(e));
         }
         // Reset internal state
         isResetting = false;
@@ -136,12 +148,21 @@ function connect() {
     // Initiate RESET handshake: write a new input.txt containing ONLY "<lastAck+1> RESET"
     resetSeq = (lastAck ?? -1) + 1;
     isResetting = true;
+    restartArmed = true;
+    // Proactively clear output so stale lines don't leak through during reset
+    (async () => {
+      try {
+        await writeAtomic(OUTPUT_PATH, '');
+        await writeAtomic(OUTPUT_POS_PATH, '-1');
+        lastOutputSeq = -1;
+        console.log('[client] output cleared at RESET start; position reset');
+      } catch (e) {
+        console.log('[client] failed clearing output at RESET start (continuing):', String(e));
+      }
+    })().catch(() => {});
     inflight = [ { seq: resetSeq, line: `${resetSeq} RESET` } ];
     console.log('[client] reset-start:', { resetSeq });
-    // Replace output.txt with a fresh empty file at reset start
-    writeAtomic(OUTPUT_PATH, '')
-      .then(() => { lastOutputSeq = -1; console.log('[client] output.txt cleared (reset start):', { path: OUTPUT_PATH }); })
-      .catch((e) => console.log('[client] failed clearing output.txt at reset start (continuing):', String(e)));
+    // Do NOT clear output.txt at reset start; keep lastOutputSeq so events aren't lost
     writeInput().catch(() => {});
     pollAck(ws);
     setInterval(() => pollAck(ws), POLL_MS);
@@ -149,7 +170,27 @@ function connect() {
   });
 
   ws.on('message', async (data: RawData) => {
-    const msg = JSON.parse(data.toString()) as ServerMessage;
+    const msg = JSON.parse(data.toString()) as IncomingServerMessage;
+    if (msg.type === 'reset') {
+      if (!isResetting) {
+        // Start reset handshake initiated by server
+        resetSeq = (lastAck ?? -1) + 1;
+        isResetting = true;
+        restartArmed = true;
+        inflight = [ { seq: resetSeq, line: `${resetSeq} RESET` } ];
+        // Clear output and position to accept fresh seq 0
+        try {
+          await writeAtomic(OUTPUT_PATH, '');
+          await writeAtomic(OUTPUT_POS_PATH, '-1');
+          lastOutputSeq = -1;
+          console.log('[client] reset-start (server):', { resetSeq });
+          await writeInput();
+        } catch (e) {
+          console.log('[client] reset-start (server) failed preparing files:', String(e));
+        }
+      }
+      return;
+    }
     if (msg.type === 'enqueue') {
       if (inflight.length >= 50) return;
       const item = { seq: msg.payload.seq, line: msg.payload.line };
@@ -200,6 +241,7 @@ function parseParams(raw: string): unknown[] {
 
 async function pollOutput(ws: WebSocket): Promise<void> {
   try {
+    if (isResetting) return; // do not process outputs while negotiating RESET
     const out = await fs.readFile(OUTPUT_PATH, 'utf8');
     const lines = out.split(/\n+/).filter(Boolean);
     for (const line of lines) {
@@ -213,11 +255,20 @@ async function pollOutput(ws: WebSocket): Promise<void> {
       const paramsRaw = rest1.slice(secondSpace + 1);
       const seq = Number(seqStr);
       if (!Number.isFinite(seq)) continue;
+      // Detect restart on-the-fly: if seq resets to 0 after a prior run, reset position once
+      if (!isResetting && seq === 0 && lastOutputSeq > 0 && restartArmed) {
+        console.log('[client] output restart detected during poll; resetting position');
+        lastOutputSeq = -1;
+        try { await writeAtomic(OUTPUT_POS_PATH, '-1'); } catch {}
+        restartArmed = false;
+      }
+      // Skip stale or duplicate lines; if seq goes backwards, treat as out-of-order and skip
       if (seq <= lastOutputSeq) continue;
       const params = parseParams(paramsRaw);
       ws.send(JSON.stringify({ type: 'output', payload: { seq, cmd, params } }));
       console.log('[client] output-received:', { seq, cmd });
       lastOutputSeq = seq;
+      try { await writeAtomic(OUTPUT_POS_PATH, String(lastOutputSeq)); } catch {}
     }
   } catch {
     // ignore missing output file
