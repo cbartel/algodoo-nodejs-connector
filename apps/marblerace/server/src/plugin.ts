@@ -7,11 +7,12 @@ import type { ServerPlugin, PluginContext, ClientMessage } from 'algodoo-server'
 import { Server as ColyseusServer } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { RaceRoom, updateClientAlive, updateScenes, dispatchAlgodooEvent } from './room.js';
-import { wireTransport } from './transport.js';
+import { wireTransport, submitPingAsync } from './transport.js';
 
 const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:plugin]', ...args);
 const debug = (...args: unknown[]) => { if (LOG_LEVEL === 'debug') console.log('[mr:plugin]', ...args); };
+const pluginHealth: { get?: () => { lastPingAt: number; lastPingRtt: number; pingOk: boolean } } = {};
 
 // Track output sequence stats from algodoo-client
 let lastOutputSeqReceived = -1;
@@ -135,6 +136,21 @@ export const marbleRacePlugin: ServerPlugin = {
     const colyHost = process.env.MARBLERACE_COLYSEUS_HOST || '0.0.0.0';
     colyHttp.listen(colyPort, colyHost, () => log('colyseus listening', { host: colyHost, port: colyPort }));
     log('initialized. colyseus separate-port', colyPort);
+
+    // Health: periodic PING roundtrip
+    let lastPingAt = 0;
+    let lastPingRtt = -1;
+    let pingOk = false;
+    setInterval(async () => {
+      const start = Date.now();
+      const ok = await submitPingAsync(1500);
+      lastPingAt = Date.now();
+      pingOk = ok;
+      lastPingRtt = ok ? (lastPingAt - start) : -1;
+    }, 3000);
+
+    // expose in module closure for /mr/health
+    (pluginHealth as any).get = () => ({ lastPingAt, lastPingRtt, pingOk });
   },
   onMessage(_ws, msg: ClientMessage, _ctx) {
     const t = msg?.type || '';
@@ -208,9 +224,10 @@ export const marbleRacePlugin: ServerPlugin = {
       if (url.startsWith('/mr/health') || url === '/mr/health') {
         debug('health 200');
         const s = ctx.getStatus ? ctx.getStatus() : { hasClient: false, inflight: 0, lastAck: -1, nextSeq: 0, clientCount: 0 };
+        const p = (pluginHealth as any).get?.() || { lastPingAt: 0, lastPingRtt: -1, pingOk: false };
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ ok: true, name: 'marblerace', algodoo: s, output: { lastSeq: lastOutputSeqReceived, gaps: outputSeqGaps } }));
+        res.end(JSON.stringify({ ok: true, name: 'marblerace', algodoo: s, output: { lastSeq: lastOutputSeqReceived, gaps: outputSeqGaps }, ping: p }));
         return;
       }
       // config endpoint: expose Colyseus URL for the web client

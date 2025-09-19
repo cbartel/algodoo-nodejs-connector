@@ -10,6 +10,7 @@ export default function Admin() {
   const [state, setState] = useState<any>(null);
   const [selectedScenes, setSelectedScenes] = useState<string[]>([]);
   const [token, setToken] = useState<string>(() => localStorage.getItem('mr_admin_token') || 'changeme');
+  const [pingInfo, setPingInfo] = useState<{ ok: boolean; rtt: number; age: number } | null>(null);
 
   useEffect(() => {
     connectRoom().then((r) => {
@@ -20,6 +21,25 @@ export default function Admin() {
         alert('Admin action denied: ' + (msg?.reason || 'unknown'));
       });
     });
+  }, []);
+
+  // Poll health for PING roundtrip RTT
+  useEffect(() => {
+    let t: any;
+    async function poll() {
+      try {
+        const res = await fetch('/mr/health');
+        const j = await res.json();
+        const last = Number(j?.ping?.lastPingAt || 0);
+        const rtt = Number(j?.ping?.lastPingRtt || -1);
+        const ok = !!j?.ping?.pingOk;
+        const age = last > 0 ? Math.round((Date.now() - last)/1000) : -1;
+        setPingInfo({ ok, rtt, age });
+      } catch {}
+      t = setTimeout(poll, 3000);
+    }
+    poll();
+    return () => t && clearTimeout(t);
   }, []);
 
   // Allow passing token via URL, e.g. /admin?token=SECRET
@@ -188,9 +208,16 @@ export default function Admin() {
                   <Badge>Current: {currentStageName}</Badge>
                   <Badge>Stage {typeof state?.stageIndex === 'number' ? state.stageIndex + 1 : '-'} / {stageCount}</Badge>
                   {!!state?.countdownMsRemaining && <Badge>Countdown: {Math.ceil((state.countdownMsRemaining || 0)/1000)}s</Badge>}
-                  <Badge tone={clientAliveAgo != null && clientAliveAgo <= 6 ? 'success' : 'warn'}>
-                    Algodoo Client: {clientAliveAgo == null ? 'unknown' : clientAliveAgo <= 6 ? 'connected' : `last alive ${clientAliveAgo}s ago`}
+              <div style={{ display:'flex', gap:6, alignItems:'center', border: pingInfo?.ok ? '3px solid #2a2' : '3px solid #a22', padding: 4 }}>
+                <Badge tone={clientAliveAgo != null && clientAliveAgo <= 6 ? 'success' : 'warn'}>
+                  Algodoo Client: {clientAliveAgo == null ? 'unknown' : clientAliveAgo <= 6 ? 'connected' : `last alive ${clientAliveAgo}s ago`}
+                </Badge>
+                {pingInfo && (
+                  <Badge tone={pingInfo.ok ? 'success' : 'danger'}>
+                    RTT: {pingInfo.rtt >= 0 ? `${pingInfo.rtt}ms` : '—'} {pingInfo.age >= 0 ? `(age ${pingInfo.age}s)` : ''}
                   </Badge>
+                )}
+              </div>
                 </div>
               </div>
             );

@@ -23,6 +23,7 @@ const INPUT_PATH = process.env.INPUT || './input.txt';
 const ACK_PATH = process.env.ACK || './ack.txt';
 const OUTPUT_PATH = process.env.OUTPUT || './output.txt';
 const OUTPUT_POS_PATH = process.env.OUTPUT_POS || './output.pos';
+const INPUT_LOG_PATH = process.env.INPUT_LOG || '';
 const POLL_MS = Number(process.env.POLL_MS || 250);
 
 let inflight: EnqueueMsg[] = [];
@@ -31,7 +32,6 @@ let isResetting = false;
 let resetSeq: number | null = null;
 const pending: EnqueueMsg[] = [];
 let lastOutputSeq = -1;
-let restartArmed = true; // allow a single on-the-fly restart detection
 
 async function writeAtomic(path: string, data: string): Promise<void> {
   const tmp = path + '.tmp';
@@ -72,6 +72,14 @@ async function writeInput() {
     : inflight;
   const data = effective.map((i) => i.line).join('\n');
   await writeAtomic(INPUT_PATH, data + (data ? '\n' : ''));
+  // Optional mirror for observability
+  if (INPUT_LOG_PATH) {
+    try {
+      const ts = new Date().toISOString();
+      const log = `[${ts}] writeInput resetting=${isResetting} lines=${effective.length}\n` + (data ? data + '\n' : '');
+      await fs.appendFile(INPUT_LOG_PATH, log);
+    } catch {}
+  }
   debug('[client] wrote input file:', { path: INPUT_PATH, lines: effective.length, resetting: isResetting, resetSeq });
 }
 
@@ -109,11 +117,8 @@ async function pollAck(ws: WebSocket): Promise<void> {
         resetSeq = null;
         lastAck = -1;
         inflight = [];
-        // Move any buffered pending enqueues into inflight and write them out
-        while (pending.length && inflight.length < 50) {
-          const item = pending.shift()!;
-          inflight.push(item);
-        }
+        // Move ALL buffered pending enqueues into inflight and write them out
+        while (pending.length) inflight.push(pending.shift()!);
       } else {
         inflight = inflight.filter((i) => i.seq > lastAck);
       }
@@ -148,7 +153,6 @@ function connect() {
     // Initiate RESET handshake: write a new input.txt containing ONLY "<lastAck+1> RESET"
     resetSeq = (lastAck ?? -1) + 1;
     isResetting = true;
-    restartArmed = true;
     // Proactively clear output so stale lines don't leak through during reset
     (async () => {
       try {
@@ -160,6 +164,8 @@ function connect() {
         console.log('[client] failed clearing output at RESET start (continuing):', String(e));
       }
     })().catch(() => {});
+    // Preserve any existing inflight items by buffering them first
+    while (inflight.length) pending.push(inflight.shift()!);
     inflight = [ { seq: resetSeq, line: `${resetSeq} RESET` } ];
     console.log('[client] reset-start:', { resetSeq });
     // Do NOT clear output.txt at reset start; keep lastOutputSeq so events aren't lost
@@ -176,7 +182,8 @@ function connect() {
         // Start reset handshake initiated by server
         resetSeq = (lastAck ?? -1) + 1;
         isResetting = true;
-        restartArmed = true;
+        // Preserve any in-flight commands by buffering them before we keep input.txt with only RESET
+        while (inflight.length) pending.push(inflight.shift()!);
         inflight = [ { seq: resetSeq, line: `${resetSeq} RESET` } ];
         // Clear output and position to accept fresh seq 0
         try {
@@ -255,13 +262,6 @@ async function pollOutput(ws: WebSocket): Promise<void> {
       const paramsRaw = rest1.slice(secondSpace + 1);
       const seq = Number(seqStr);
       if (!Number.isFinite(seq)) continue;
-      // Detect restart on-the-fly: if seq resets to 0 after a prior run, reset position once
-      if (!isResetting && seq === 0 && lastOutputSeq > 0 && restartArmed) {
-        console.log('[client] output restart detected during poll; resetting position');
-        lastOutputSeq = -1;
-        try { await writeAtomic(OUTPUT_POS_PATH, '-1'); } catch {}
-        restartArmed = false;
-      }
       // Skip stale or duplicate lines; if seq goes backwards, treat as out-of-order and skip
       if (seq <= lastOutputSeq) continue;
       const params = parseParams(paramsRaw);

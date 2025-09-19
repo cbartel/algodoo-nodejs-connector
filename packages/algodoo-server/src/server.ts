@@ -19,6 +19,10 @@ export interface PluginContext {
   submitEval(thyme: string): { ok: boolean; seq?: number; reason?: string };
   /** Submit a Thyme script and resolve when acknowledged. */
   submitEvalAsync(thyme: string, opts?: { timeoutMs?: number }): Promise<{ seq: number }>;
+  /** Submit a raw command line (e.g., PING) */
+  submitRaw(cmd: string): { ok: boolean; seq?: number; reason?: string };
+  /** Submit a raw command and resolve when acknowledged. */
+  submitRawAsync(cmd: string, opts?: { timeoutMs?: number }): Promise<{ seq: number }>;
   /** Transport status for health checks. */
   getStatus(): { hasClient: boolean; inflight: number; lastAck: number; nextSeq: number; clientCount: number };
 }
@@ -102,6 +106,45 @@ export function submitEvalAsync(thyme: string, opts: { timeoutMs?: number } = {}
   });
 }
 
+export function submitRaw(cmd: string): { ok: boolean; seq?: number; reason?: string } {
+  if (!algodooClient || algodooClient.readyState !== WebSocket.OPEN) {
+    srvDebug('submitRaw rejected: no algodoo-client');
+    return { ok: false, reason: 'no-client' };
+    }
+  if (inflight.length >= 50) {
+    srvDebug('submitRaw rejected: backpressure');
+    return { ok: false, reason: 'backpressure' };
+  }
+  const seq = nextSeq();
+  const line = `${seq} ${cmd}`;
+  inflight.push({ seq, line });
+  algodooClient.send(JSON.stringify({ type: 'enqueue', payload: { seq, line } }));
+  srvDebug('submitRaw enqueued', { seq, cmd });
+  return { ok: true, seq };
+}
+
+export function submitRawAsync(cmd: string, opts: { timeoutMs?: number } = {}): Promise<{ seq: number }> {
+  const res = submitRaw(cmd);
+  if (!res.ok || !Number.isFinite(res.seq)) {
+    const reason = res.reason || 'unknown';
+    return Promise.reject(new Error(`submitRaw failed: ${reason}`));
+  }
+  const seq = res.seq as number;
+  if (lastAck >= seq) return Promise.resolve({ seq });
+  const timeoutMs = Math.max(1, Number(opts.timeoutMs ?? 5000));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingAcks.delete(seq);
+      reject(new Error(`submitRaw timeout: seq=${seq}`));
+    }, timeoutMs);
+    pendingAcks.set(seq, {
+      resolve: (v) => { clearTimeout(timer); resolve(v); },
+      reject: (err) => { clearTimeout(timer); reject(err); },
+      timer,
+    });
+  });
+}
+
 export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOptions = {}) {
   // Normalize plugins in case caller passed an ESM module instead of the plugin object
   const normPlugins: ServerPlugin[] = plugins.map((p: any) => {
@@ -161,6 +204,8 @@ export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOp
     send,
     submitEval,
     submitEvalAsync,
+    submitRaw,
+    submitRawAsync,
     getStatus: () => ({
       hasClient: !!algodooClient && algodooClient.readyState === WebSocket.OPEN,
       inflight: inflight.length,

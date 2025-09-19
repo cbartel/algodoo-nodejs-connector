@@ -359,12 +359,11 @@ export class RaceRoom extends Room<RaceStateSchema> {
     } else if (ev.type === 'marble.finish') {
       if (this.state.stagePhase !== 'running') return;
       const pid = ev.payload.playerId;
-      // Count every finished marble; allow multiple finishes per player
+      // Count every finished marble; placement is global finish count
       this.finishOrder.push(pid);
       const name = this.state.players.get(pid)?.name ?? pid;
-      this.pushTicker('finish', `${name} finished #${this.finishOrder.length}`);
-      // Award points immediately for this finisher based on placement
       const placement = this.finishOrder.length;
+      this.pushTicker('finish', `${name} finished #${placement}`);
       const points = this.pointsForPlacement(placement);
       const p = this.state.players.get(pid);
       if (p) {
@@ -373,12 +372,12 @@ export class RaceRoom extends Room<RaceStateSchema> {
         if (!res) {
           res = new ResultSchema();
           res.stageIndex = stageIdx;
-          res.placement = placement; // first placement is the best so far
+          res.placement = placement; // best placement so far
           res.points = 0;
           res.finishedAt = 0;
           p.results[stageIdx] = res;
         }
-        // Keep the best (lowest) placement and accumulate points for the stage
+        // accumulate points per marble; keep best (lowest) placement
         if (!res.placement || placement < res.placement) res.placement = placement;
         res.points = (res.points | 0) + points;
         res.finishedAt = Date.now();

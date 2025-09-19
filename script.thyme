@@ -2,7 +2,7 @@ _ackfile = "ack.txt";
 _infile = "input.txt";
 _outfile = "output.txt";
 _lastline = -1;
-_pollEvery = 120;
+_pollEvery = 15;
 _currentLine = "";
 _currentCmd = "";
 _currentSeq = 0;
@@ -54,6 +54,10 @@ _readLine = (e) => {
     e._currentCmd = cmd;
 
     (e._lastline >= seq) ? {} : {
+        (e._currentCmd == "PING") ? {
+            e._executePingCmd(e);
+        } : {};
+
         (e._currentCmd == "PRINT") ? {
             e._executePrintCmd(e);
         } : {};
@@ -72,6 +76,10 @@ _readLine = (e) => {
 
 _executePrintCmd = (e) => {
     print(e._currentSplit(2));
+};
+
+_executePingCmd = (e) => {
+    print("received PING");
 };
 
 _executeEvalCmd = (e) => {
