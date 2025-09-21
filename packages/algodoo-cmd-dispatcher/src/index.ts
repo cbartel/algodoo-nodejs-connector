@@ -23,6 +23,9 @@ export class SeqCounter {
   next(): number {
     return this.n++;
   }
+  reset(): void {
+    this.n = 0;
+  }
 }
 
 export function serializeParams(p: string): string {
@@ -120,7 +123,19 @@ export const cmdDispatcherPlugin: ServerPlugin = {
     debug('[server:cmd] ui connected. total:', uiClients.size);
   },
   onMessage(ws, msg: ClientMessage<unknown>, ctx) {
-    if (msg.type === 'submit') {
+    if (msg.type === 'client.hello') {
+      // Identify algodoo-client and re-enqueue any outstanding inflight items
+      algodooClient = ws as unknown as WebSocket;
+      try {
+        for (const item of inflight) ctx.send(ws, { type: 'enqueue', payload: { seq: item.seq, line: item.line } });
+      } catch {}
+    } else if (msg.type === 'reset.ack') {
+      // Clear queue and counters on RESET completion
+      inflight.splice(0, inflight.length);
+      lastAck = -1;
+      seqCounter.reset();
+      debug('[server:cmd] reset.ack: cleared inflight and reset counter');
+    } else if (msg.type === 'submit') {
       handleSubmit(ws, msg.payload as SubmitPayload, ctx);
     } else if (msg.type === 'drain') {
       handleDrain(ws, msg.payload as DrainPayload, ctx);

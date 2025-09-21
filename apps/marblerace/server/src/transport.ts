@@ -36,6 +36,11 @@ export function requestClientReset(): void {
   try { boundBroadcast({ type: 'reset' }); } catch {}
 }
 
+export function requestClientScanScenes(): void {
+  if (!boundBroadcast) return;
+  try { boundBroadcast({ type: 'scan.scenes' }); } catch {}
+}
+
 export async function submitPingAsync(timeoutMs = 2000): Promise<boolean> {
   if (!boundRawAsync) return false;
   try {

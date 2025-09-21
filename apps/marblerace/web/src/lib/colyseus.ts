@@ -1,31 +1,102 @@
 import * as Colyseus from 'colyseus.js';
 import { protocolVersion } from 'marblerace-protocol';
 
+const MR_PLAYER_KEY = 'mr_player_key';
+const MR_ROOM_ID = 'mr_room_id';
+const MR_SESSION_ID = 'mr_session_id';
+
+function getOrCreatePlayerKey(): string {
+  const existing = localStorage.getItem(MR_PLAYER_KEY);
+  if (existing && existing.length >= 8) return existing;
+  const rand = crypto.getRandomValues(new Uint8Array(16));
+  const key = Array.from(rand).map((b) => b.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem(MR_PLAYER_KEY, key);
+  return key;
+}
+
 export async function connectRoom(): Promise<Colyseus.Room> {
-  const loc = window.location;
-  let endpoint: string;
-  let cfg: any = null;
-  try {
-    const res = await fetch('/mr/config', { credentials: 'include' });
-    cfg = await res.json();
-    endpoint = cfg.colyseusUrl as string;
-  } catch {
-    // Fallback: same host, default Colyseus port
-    const host = loc.hostname;
-    const scheme = loc.protocol === 'https:' ? 'https' : 'http';
-    endpoint = `${scheme}://${host}:2567`;
+  async function resolveEndpoint(): Promise<string> {
+    const loc = window.location;
+    try {
+      const res = await fetch('/mr/config', { credentials: 'include' });
+      const cfg = await res.json();
+      return String(cfg.colyseusUrl || '').trim();
+    } catch {
+      const host = loc.hostname;
+      const scheme = loc.protocol === 'https:' ? 'https' : 'http';
+      return `${scheme}://${host}:2567`;
+    }
   }
-  const client = new Colyseus.Client(endpoint);
-  try {
-    const room = await client.joinOrCreate('marblerace', {});
-    room.onError((code, message) => console.error('[web] room error', { code, message }));
-    room.onLeave((code) => console.warn('[web] room left', { code }));
-    room.send('handshake', { protocolVersion });
-    return room;
-  } catch (err) {
-    console.error('[web] joinOrCreate failed', err);
-    throw err;
+  const endpoint = await resolveEndpoint();
+  const playerKey = getOrCreatePlayerKey();
+  localStorage.setItem('mr_endpoint', endpoint);
+
+  async function openNewRoom(): Promise<Colyseus.Room> {
+    const client = new Colyseus.Client(await resolveEndpoint());
+    const prevRoomId = localStorage.getItem(MR_ROOM_ID) || undefined;
+    const prevSessionId = localStorage.getItem(MR_SESSION_ID) || undefined;
+    let r: Colyseus.Room | null = null;
+    if (prevRoomId && prevSessionId) {
+      try {
+        r = await client.reconnect(prevRoomId, prevSessionId);
+        console.log('[web] reconnected to room', r.id);
+      } catch {}
+    }
+    if (!r) {
+      r = await client.joinOrCreate('marblerace', {});
+      console.log('[web] joined new room', r.id);
+    }
+    // Identify ourselves so server can associate stable player
+    try { r.send('handshake', { protocolVersion, playerKey }); } catch {}
+    // Persist session for future reconnects
+    try {
+      localStorage.setItem(MR_ROOM_ID, r.id);
+      localStorage.setItem(MR_SESSION_ID, r.sessionId);
+    } catch {}
+    return r;
   }
+
+  function dispatchReconnected(newRoom: Colyseus.Room) {
+    try {
+      window.dispatchEvent(new CustomEvent('mr:room.reconnected', { detail: { room: newRoom } }));
+    } catch {}
+  }
+
+  async function attachResilience(r: Colyseus.Room): Promise<Colyseus.Room> {
+    r.onError((_code, _message) => {
+      console.warn('[web] room error; scheduling reconnect');
+      scheduleReconnect();
+    });
+    r.onLeave((_code) => {
+      console.warn('[web] room left; scheduling reconnect');
+      scheduleReconnect();
+    });
+    return r;
+  }
+
+  let reconnecting = false;
+  async function scheduleReconnect() {
+    if (reconnecting) return;
+    reconnecting = true;
+    let delay = 500;
+    while (true) {
+      try {
+        await new Promise((res) => setTimeout(res, delay));
+        const newRoom = await openNewRoom();
+        await attachResilience(newRoom);
+        reconnecting = false;
+        dispatchReconnected(newRoom);
+        return;
+      } catch (e) {
+        console.warn('[web] reconnect failed; retrying', e);
+        delay = Math.min(delay * 2, 5000);
+      }
+    }
+  }
+
+  const firstRoom = await openNewRoom();
+  await attachResilience(firstRoom);
+  return firstRoom;
 }
 
 export async function getServerConfig(): Promise<{ colyseusUrl?: string; publicHttpUrl?: string } | null> {
@@ -35,4 +106,8 @@ export async function getServerConfig(): Promise<{ colyseusUrl?: string; publicH
   } catch {
     return null;
   }
+}
+
+export function getPlayerKey(): string {
+  return getOrCreatePlayerKey();
 }

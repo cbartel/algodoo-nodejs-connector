@@ -7,7 +7,8 @@ import type { ServerPlugin, PluginContext, ClientMessage } from 'algodoo-server'
 import { Server as ColyseusServer } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { RaceRoom, updateClientAlive, updateScenes, dispatchAlgodooEvent } from './room.js';
-import { wireTransport, submitPingAsync } from './transport.js';
+import { wireTransport, submitPingAsync, requestClientScanScenes } from './transport.js';
+import { setLastScenes } from './scenesCache.js';
 
 const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:plugin]', ...args);
@@ -161,11 +162,14 @@ export const marbleRacePlugin: ServerPlugin = {
       outputSeqGaps = 0;
       debug('output seq tracking reset on hello');
       updateClientAlive(Date.now());
+      // Request an immediate scene scan on new client session
+      try { requestClientScanScenes(); } catch {}
     } else if (t === 'client.alive') {
       const ts = Number((msg as any)?.payload?.ts ?? Date.now());
       updateClientAlive(ts);
     } else if (t === 'client.scenes') {
       const files = Array.isArray((msg as any)?.payload?.files) ? (msg as any).payload.files as string[] : [];
+      setLastScenes(files);
       updateScenes(files);
     } else if (t === 'output') {
       try {

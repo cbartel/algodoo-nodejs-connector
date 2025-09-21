@@ -81,7 +81,7 @@ Primary commands
 ## Transport and Integration
 
 - `algodoo-server` plugin context is wired in `apps/marblerace/server/src/transport.ts` to expose `submitEval` and `submitEvalAsync`.
-- The sample `packages/algodoo-client` connects to the `algodoo-server` WS and handles a file-based queue (`input.txt`/`ack.txt`), including a reset handshake. It periodically publishes available scene files back to the server (used on Admin page).
+- The sample `packages/algodoo-client` connects to the `algodoo-server` WS and handles a file-based queue (`input.txt`/`ack.txt`), including a reset handshake. After Algodoo acknowledges the `RESET` command, the client sends a `reset.ack` control message; the server then clears its queue and resets sequence counters to 0. The client drops any buffered commands across a reset to guarantee a fresh start. It periodically publishes available scene files back to the server (used on Admin page).
 
 
 ## Security & Hardening

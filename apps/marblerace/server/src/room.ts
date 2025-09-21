@@ -10,7 +10,9 @@ import {
   AlgodooEvent,
 } from 'marblerace-protocol';
 import { Orchestrator } from './orchestrator.js';
-import { RaceStateSchema, PlayerSchema, StageSchema, ResultSchema, TickerSchema, PointsTierSchema } from './schema.js';
+import { requestClientScanScenes } from './transport.js';
+import { getLastScenes } from './scenesCache.js';
+import { RaceStateSchema, PlayerSchema, StageSchema, ResultSchema, PointsTierSchema } from './schema.js';
 
 type ClientData = {
   isAdmin?: boolean;
@@ -29,6 +31,8 @@ export class RaceRoom extends Room<RaceStateSchema> {
   private stageTimeout?: NodeJS.Timeout;
   private countdownTimer?: NodeJS.Timeout;
   private loadingReadyFallback?: NodeJS.Timeout;
+  private prepTimer?: NodeJS.Timeout;
+  private postStageTimer?: NodeJS.Timeout;
   private finishOrder: string[] = []; // playerIds per stage
 
   // Simple admin guard via env token
@@ -45,34 +49,54 @@ export class RaceRoom extends Room<RaceStateSchema> {
     state.globalPhase = 'lobby';
     state.stageIndex = -1;
     state.stagePhase = 'loading';
-    state.perStageTimeoutMs = 120000;
+    // Disable stage hard timeouts by default; stages end when all points are awarded
+    // or an admin manually ends/advances.
+    state.perStageTimeoutMs = 0;
     state.pointsTable.push(...defaultPointsTable.map((n) => n));
     state.autoAdvance = true;
     state.lobbyOpen = false;
     state.roomId = this.roomId;
     this.setState(state);
+    // Seed scenes from cache if available (client might have published before this room existed)
+    try {
+      const cached = getLastScenes();
+      if (cached && cached.length) {
+        state.scenes.splice(0, state.scenes.length);
+        for (const f of cached) state.scenes.push(f);
+      }
+    } catch {}
 
     this.orchestrator = new Orchestrator({
       onEvent: (ev) => this.handleAlgodooEvent(ev),
     });
+    // Ask client to scan scenes now that a room exists
+    try { requestClientScanScenes(); } catch {}
 
     // Handshake / Client messages
-    this.onMessage('handshake', (client: Client, payload: { protocolVersion: string }) => {
+    this.onMessage('handshake', (client: Client, payload: { protocolVersion: string; playerKey?: string }) => {
       debug('handshake', client.sessionId, payload?.protocolVersion);
       if (payload?.protocolVersion !== protocolVersion) {
         log('protocol-mismatch', payload?.protocolVersion, 'expected', protocolVersion);
         client.error(4000, 'protocol-mismatch');
         client.leave(1000, 'protocol-mismatch');
       }
+      // If client presents a known playerKey, associate it for this session
+      const key = String(payload?.playerKey || '').trim();
+      if (key && this.state.players.has(key)) {
+        this.getClientData(client).playerId = key;
+        debug('handshake: associated playerKey', { key });
+      }
     });
 
-    this.onMessage('join', (client: Client, payload: { name: string }) => {
+    this.onMessage('join', (client: Client, payload: { name: string; playerKey?: string; color?: { r: number; g: number; b: number } }) => {
       const cd = this.getClientData(client);
-      if (!this.state.lobbyOpen || this.state.globalPhase !== 'lobby') {
-        debug('join denied; lobbyOpen/globalPhase', this.state.lobbyOpen, this.state.globalPhase);
+      // Allow join any time while lobby is open (late join)
+      if (!this.state.lobbyOpen) {
+        debug('join denied; lobby closed');
         return;
       }
-      const id = client.sessionId;
+      const requestedKey = String(payload?.playerKey || '').trim();
+      const id = requestedKey || client.sessionId;
       const name = (payload?.name || 'Player').slice(0, 24);
       debug('join', id, name);
       if (!this.state.players.has(id)) {
@@ -84,26 +108,30 @@ export class RaceRoom extends Room<RaceStateSchema> {
         ps.config.density = defaultMarbleConfig.density;
         ps.config.friction = defaultMarbleConfig.friction;
         ps.config.restitution = defaultMarbleConfig.restitution;
-        ps.config.linearDamping = defaultMarbleConfig.linearDamping;
-        ps.config.angularDamping = defaultMarbleConfig.angularDamping;
-        ps.config.color.r = defaultMarbleConfig.color.r;
-        ps.config.color.g = defaultMarbleConfig.color.g;
-        ps.config.color.b = defaultMarbleConfig.color.b;
+        const c = (payload as any)?.color;
+        const validColor = c && Number.isFinite(c.r) && Number.isFinite(c.g) && Number.isFinite(c.b);
+        ps.config.color.r = validColor ? Math.max(0, Math.min(255, c.r|0)) : defaultMarbleConfig.color.r;
+        ps.config.color.g = validColor ? Math.max(0, Math.min(255, c.g|0)) : defaultMarbleConfig.color.g;
+        ps.config.color.b = validColor ? Math.max(0, Math.min(255, c.b|0)) : defaultMarbleConfig.color.b;
         this.state.players.set(id, ps);
         this.pushTicker('join', `${name} joined lobby`);
       } else {
         const ps = this.state.players.get(id)!;
         ps.name = name;
+        const c = (payload as any)?.color;
+        if (c && Number.isFinite(c.r) && Number.isFinite(c.g) && Number.isFinite(c.b)) {
+          ps.config.color.r = Math.max(0, Math.min(255, c.r|0));
+          ps.config.color.g = Math.max(0, Math.min(255, c.g|0));
+          ps.config.color.b = Math.max(0, Math.min(255, c.b|0));
+        }
       }
       cd.playerId = id;
     });
 
-    this.onMessage('setConfig', (client: Client, payload: { partial: Partial<{ radius: number; density: number; friction: number; restitution: number; linearDamping: number; angularDamping: number; color: { r: number; g: number; b: number } }> }) => {
-      // Allow only during PREP or COUNTDOWN, and only if not spawned yet
+    this.onMessage('setConfig', (client: Client, payload: { partial: Partial<{ radius: number; density: number; friction: number; restitution: number; color: { r: number; g: number; b: number } }> }) => {
       const gp = this.state.globalPhase;
       const sp = this.state.stagePhase;
-      if (!((sp === 'prep' || sp === 'countdown') && (gp === 'intermission' || gp === 'countdown'))) { debug('setConfig denied: phase'); return; }
-      const id = client.sessionId;
+      const id = this.getClientData(client)?.playerId || client.sessionId;
       const p = this.state.players.get(id);
       if (!p) return;
       if (p.spawned) { debug('setConfig denied: already spawned'); return; }
@@ -112,17 +140,24 @@ export class RaceRoom extends Room<RaceStateSchema> {
         density: p.config.density,
         friction: p.config.friction,
         restitution: p.config.restitution,
-        linearDamping: p.config.linearDamping,
-        angularDamping: p.config.angularDamping,
         color: { r: p.config.color.r, g: p.config.color.g, b: p.config.color.b },
       };
-      const clamped = clampConfig(payload?.partial ?? {}, src);
+      const incoming = payload?.partial ?? {};
+      const apply: any = {};
+      // Allow color pre-spawn in lobby/prep/countdown
+      if (incoming.color && (gp === 'lobby' || sp === 'prep' || sp === 'countdown')) apply.color = incoming.color;
+      // Allow stats only during PREP in intermission
+      if (sp === 'prep' && gp === 'intermission') {
+        if (typeof incoming.radius === 'number') apply.radius = incoming.radius;
+        if (typeof incoming.density === 'number') apply.density = incoming.density;
+        if (typeof incoming.friction === 'number') apply.friction = incoming.friction;
+        if (typeof incoming.restitution === 'number') apply.restitution = incoming.restitution;
+      }
+      const clamped = clampConfig(apply, src as any);
       p.config.radius = clamped.radius;
       p.config.density = clamped.density;
       p.config.friction = clamped.friction;
       p.config.restitution = clamped.restitution;
-      p.config.linearDamping = clamped.linearDamping;
-      p.config.angularDamping = clamped.angularDamping;
       p.config.color.r = clamped.color.r;
       p.config.color.g = clamped.color.g;
       p.config.color.b = clamped.color.b;
@@ -143,6 +178,16 @@ export class RaceRoom extends Room<RaceStateSchema> {
         case 'createRace':
           this.createRace(data);
           break;
+        case 'endStageNow': {
+          // Admin forces the current stage to end regardless of remaining points
+          if (this.state.stageIndex >= 0 && this.state.stagePhase !== 'stage_finished') {
+            this.pushTicker('admin', 'Stage ended by admin');
+            this.endStage(false);
+          } else {
+            debug('endStageNow ignored: no active stage or already finished');
+          }
+          break;
+        }
         case 'openLobby':
           this.state.lobbyOpen = true;
           this.pushTicker('lobby', 'Lobby opened');
@@ -176,6 +221,48 @@ export class RaceRoom extends Room<RaceStateSchema> {
         case 'setAutoAdvance':
           this.state.autoAdvance = !!data?.auto;
           break;
+        case 'setPrepTimeout': {
+          const seconds = Number((data?.seconds ?? data?.ms ?? 60));
+          const ms = Math.max(0, Math.min(60 * 60 * 1000, (data?.ms != null ? Number(data.ms) : Math.round(seconds * 1000))));
+          this.state.perPrepTimeoutMs = ms | 0;
+          this.pushTicker('prep', `Prep limit set: ${Math.ceil(this.state.perPrepTimeoutMs/1000)}s`);
+          // If currently in prep, restart timer with new limit
+          if (this.state.stagePhase === 'prep') this.startPrepTimer();
+          break;
+        }
+        case 'scanScenes':
+          // Ask Algodoo client to scan and publish scenes immediately
+          requestClientScanScenes();
+          this.pushTicker('scenes', 'Requested scene scan');
+          break;
+        case 'setAutoAdvanceDelay': {
+          const seconds = Number((data?.seconds ?? data?.ms ?? 15));
+          const ms = Math.max(0, Math.min(60 * 60 * 1000, (data?.ms != null ? Number(data.ms) : Math.round(seconds * 1000))));
+          this.state.perPostStageDelayMs = ms | 0;
+          this.pushTicker('stage', `Auto-advance delay set: ${Math.ceil(this.state.perPostStageDelayMs/1000)}s`);
+          if (this.state.stagePhase === 'stage_finished' && this.state.autoAdvance) this.startPostStageTimer();
+          break;
+        }
+        case 'removePlayer': {
+          const pid = String(data?.playerId || '').trim();
+          if (!pid) break;
+          const p = this.state.players.get(pid);
+          const name = p?.name || pid;
+          if (p) {
+            try { this.state.players.delete(pid as any); } catch { (this.state.players as any)[pid] = undefined; }
+            this.pushTicker('lobby', `Removed player: ${name}`);
+          }
+          try {
+            const clients: Client[] = (this as any).clients || [];
+            for (const c of clients) {
+              const cd = this.getClientData(c);
+              if (cd?.playerId === pid) {
+                try { c.leave(4001, 'removed-by-admin'); } catch {}
+              }
+            }
+          } catch {}
+          break;
+        }
       }
     });
 
@@ -187,7 +274,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
         debug('spawn denied: wrong phase', { sp, gp });
         return;
       }
-      const id = client.sessionId;
+      const id = this.getClientData(client)?.playerId || client.sessionId;
       const p = this.state.players.get(id);
       if (!p) { debug('spawn denied: no player'); return; }
       if (p.spawned) { debug('spawn ignored: already spawned'); return; }
@@ -199,8 +286,6 @@ export class RaceRoom extends Room<RaceStateSchema> {
           density: p.config.density,
           friction: p.config.friction,
           restitution: p.config.restitution,
-          linearDamping: p.config.linearDamping,
-          angularDamping: p.config.angularDamping,
           color: { r: p.config.color.r, g: p.config.color.g, b: p.config.color.b },
         },
       };
@@ -224,6 +309,16 @@ export class RaceRoom extends Room<RaceStateSchema> {
   onLeave(client: Client, consented: boolean) {
     debug('onLeave', client.sessionId, { consented });
     // keep players in roster for overall standings; do not remove
+    if (!consented) {
+      // Allow reconnection window to resume same session
+      const cd = this.getClientData(client);
+      this.allowReconnection(client, 180).then(() => {
+        // Reconnected: cd remains matched via handshake as well
+        debug('reconnected', client.sessionId);
+      }).catch(() => {
+        debug('reconnect timeout', client.sessionId);
+      });
+    }
   }
 
   onDispose() {
@@ -322,6 +417,9 @@ export class RaceRoom extends Room<RaceStateSchema> {
       this.finishRace();
       return;
     }
+    // reset post-stage overlay/timer
+    this.state.postStageMsRemaining = 0;
+    if (this.postStageTimer) { clearTimeout(this.postStageTimer); this.postStageTimer = undefined; }
     this.state.stageIndex = next;
     this.state.stagePhase = 'loading';
     this.state.globalPhase = 'intermission';
@@ -345,6 +443,12 @@ export class RaceRoom extends Room<RaceStateSchema> {
   private setStagePhase(phase: StagePhase) {
     debug('setStagePhase', this.state.stagePhase, '->', phase);
     this.state.stagePhase = phase;
+    if (phase === 'prep') {
+      this.startPrepTimer();
+    } else {
+      this.state.prepMsRemaining = 0;
+      if (this.prepTimer) { clearTimeout(this.prepTimer); this.prepTimer = undefined; }
+    }
   }
 
   // Event handling from Algodoo
@@ -391,7 +495,9 @@ export class RaceRoom extends Room<RaceStateSchema> {
       const required = this.requiredFinishers();
       if (required > 0 && this.finishOrder.length >= required) this.endStage(false);
     } else if (ev.type === 'stage.timeout') {
-      if (this.state.stagePhase === 'running') this.endStage(true);
+      // Ignore runtime timeouts for stage conclusion. Stages end only when
+      // all awardable points have been assigned, or via admin action.
+      this.pushTicker('timeout', 'Stage timeout event received (ignored)');
     } else if (ev.type === 'stage.reset') {
       // no-op currently
     }
@@ -406,6 +512,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.setStagePhase('countdown');
     this.state.globalPhase = 'countdown';
     this.state.countdownMsRemaining = seconds * 1000;
+    this.pushTicker('countdown', `Countdown started: ${seconds}s`);
     this.orchestrator.countdown(seconds);
     const startedAt = Date.now();
     const tick = () => {
@@ -424,16 +531,39 @@ export class RaceRoom extends Room<RaceStateSchema> {
 
   private startStageRun() {
     log('startStageRun');
+    // Auto-spawn any players who haven't spawned yet during countdown
+    this.spawnAnyUnspawned().then(() => {}).catch(() => {});
     this.setStagePhase('running');
     this.state.globalPhase = 'running';
+    this.pushTicker('stage', 'Stage running');
     this.orchestrator.go();
-    // Enforce timeout
-    const ms = this.state.perStageTimeoutMs;
-    if (ms && ms > 0) {
-      this.stageTimeout = setTimeout(() => {
-        this.handleAlgodooEvent({ type: 'stage.timeout', payload: { stageId: this.state.stages[this.state.stageIndex].id, ts: Date.now() } });
-      }, ms);
-    }
+    // No hard timeout: stage ends when all awardable points are claimed or admin intervenes
+  }
+
+  private async spawnAnyUnspawned() {
+    try {
+      const toSpawn: Array<{ id: string; name: string; config: { radius: number; density: number; friction: number; restitution: number; color: { r: number; g: number; b: number } } }> = [];
+      this.state.players.forEach((p) => {
+        if (!p.spawned) {
+          toSpawn.push({
+            id: p.id,
+            name: p.name,
+            config: {
+              radius: p.config.radius,
+              density: p.config.density,
+              friction: p.config.friction,
+              restitution: p.config.restitution,
+              color: { r: p.config.color.r, g: p.config.color.g, b: p.config.color.b },
+            },
+          });
+          p.spawned = true;
+        }
+      });
+      for (const pl of toSpawn) {
+        await this.orchestrator.spawnMarble(pl);
+        this.pushTicker('spawn', `${pl.name} spawned`);
+      }
+    } catch {}
   }
 
   private endStage(dueToTimeout: boolean) {
@@ -481,8 +611,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.pushTicker('stage', `Stage ${stageIdx + 1} finished. Leader: ${top?.name ?? '—'}`);
 
     if (this.state.autoAdvance) {
-      // small delay before moving on
-      setTimeout(() => this.advanceStage(), 1500);
+      this.startPostStageTimer();
     }
   }
 
@@ -490,17 +619,65 @@ export class RaceRoom extends Room<RaceStateSchema> {
     if (this.stageTimeout) clearTimeout(this.stageTimeout);
     if (this.countdownTimer) clearTimeout(this.countdownTimer);
     if (this.loadingReadyFallback) clearTimeout(this.loadingReadyFallback);
+    if (this.prepTimer) clearTimeout(this.prepTimer);
     this.stageTimeout = undefined;
     this.countdownTimer = undefined;
     this.loadingReadyFallback = undefined;
+    this.prepTimer = undefined;
+    if (this.postStageTimer) clearTimeout(this.postStageTimer);
+    this.postStageTimer = undefined;
+  }
+
+  private startPrepTimer() {
+    if (this.prepTimer) { clearTimeout(this.prepTimer); this.prepTimer = undefined; }
+    const total = Math.max(0, Number(this.state.perPrepTimeoutMs || 0));
+    if (!total) { this.state.prepMsRemaining = 0; return; }
+    this.state.prepMsRemaining = total;
+    this.pushTicker('prep', `Preparation time started: ${Math.ceil(total/1000)}s`);
+    const startedAt = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - startedAt;
+      const remain = Math.max(0, total - elapsed);
+      this.state.prepMsRemaining = remain;
+      if (this.state.stagePhase !== 'prep') { this.state.prepMsRemaining = 0; return; }
+      if (remain <= 0) {
+        this.state.prepMsRemaining = 0;
+        // Auto-begin countdown if still in prep
+        if (this.state.stagePhase === 'prep' && this.state.globalPhase === 'intermission') {
+          this.beginCountdown(10);
+        }
+      } else {
+        this.prepTimer = setTimeout(tick, 100);
+      }
+    };
+    this.prepTimer = setTimeout(tick, 100);
+  }
+
+  private startPostStageTimer() {
+    if (this.postStageTimer) { clearTimeout(this.postStageTimer); this.postStageTimer = undefined; }
+    const total = Math.max(0, Number(this.state.perPostStageDelayMs || 0));
+    if (!total) { this.state.postStageMsRemaining = 0; return; }
+    this.state.postStageMsRemaining = total;
+    const startedAt = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - startedAt;
+      const remain = Math.max(0, total - elapsed);
+      this.state.postStageMsRemaining = remain;
+      if (this.state.stagePhase !== 'stage_finished') { this.state.postStageMsRemaining = 0; return; }
+      if (remain <= 0) {
+        this.state.postStageMsRemaining = 0;
+        this.advanceStage();
+      } else {
+        this.postStageTimer = setTimeout(tick, 100);
+      }
+    };
+    this.postStageTimer = setTimeout(tick, 100);
   }
 
   pushTicker(kind: string, msg: string) {
-    const item = new TickerSchema();
-    item.ts = Date.now();
-    item.kind = kind;
-    item.msg = msg;
-    this.state.ticker.unshift(item);
+    const ts = new Date().toLocaleTimeString();
+    const line = `[${ts}] ${kind}${msg ? `: ${msg}` : ''}`;
+    (this.state.ticker as any).unshift(line);
     while (this.state.ticker.length > 10) this.state.ticker.pop();
   }
 
@@ -557,7 +734,6 @@ export function updateScenes(files: string[]) {
     // replace scenes array
     room.state.scenes.splice(0, room.state.scenes.length);
     for (const f of files) room.state.scenes.push(f);
-    room.pushTicker('scenes', `${files.length} scene(s) detected`);
   }
 }
 
@@ -567,3 +743,6 @@ export function dispatchAlgodooEvent(ev: AlgodooEvent) {
     try { room.ingestEventFromAlgodoo(ev); } catch {}
   }
 }
+
+// Provide a plain snapshot of ticker events for HTTP consumers
+// getTickerSnapshot was removed; dashboard consumes ticker directly via Colyseus observers.

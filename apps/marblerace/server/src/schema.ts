@@ -7,12 +7,10 @@ export class RGBSchema extends Schema {
 }
 
 export class ConfigSchema extends Schema {
-  @type('number') radius = 0.03;
-  @type('number') density = 1.0;
-  @type('number') friction = 0.3;
-  @type('number') restitution = 0.25;
-  @type('number') linearDamping = 0.1;
-  @type('number') angularDamping = 0.1;
+  @type('number') radius = 0.0325; // midpoint of [0.02, 0.045]
+  @type('number') density = 2.25;  // midpoint of [0.5, 4.0]
+  @type('number') friction = 0.5;  // midpoint of [0, 1]
+  @type('number') restitution = 0.5; // midpoint of [0, 1]
   @type(RGBSchema) color = new RGBSchema();
 }
 
@@ -25,7 +23,7 @@ export class ResultSchema extends Schema {
   @type('int16') stageIndex = -1;
   @type('int16') placement = 0; // 0 => DNF
   @type('int32') points = 0;
-  @type('int64') finishedAt = 0; // 0 => undefined
+  @type('number') finishedAt = 0; // 0 => undefined
 }
 
 export class PointsTierSchema extends Schema {
@@ -44,11 +42,7 @@ export class PlayerSchema extends Schema {
   @type([ResultSchema]) results = new ArraySchema<ResultSchema>();
 }
 
-export class TickerSchema extends Schema {
-  @type('int64') ts = 0;
-  @type('string') kind = '';
-  @type('string') msg = '';
-}
+// Simplified ticker: plain strings for robustness
 
 export class RaceStateSchema extends Schema {
   @type('string') protocolVersion = '';
@@ -58,6 +52,7 @@ export class RaceStateSchema extends Schema {
   @type('string') stagePhase: 'loading' | 'prep' | 'countdown' | 'running' | 'stage_finished' = 'loading';
   @type('string') seed = '';
   @type('int32') perStageTimeoutMs = 120000;
+  @type('int32') perPrepTimeoutMs = 60000;
   // Legacy per-placement table for backward compatibility
   @type(['int16']) pointsTable = new ArraySchema<number>();
   // New tiered points configuration
@@ -65,10 +60,13 @@ export class RaceStateSchema extends Schema {
   @type('boolean') autoAdvance = true;
   @type('boolean') lobbyOpen = false;
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
-  @type([TickerSchema]) ticker = new ArraySchema<TickerSchema>();
+  @type(['string']) ticker = new ArraySchema<string>();
   @type('int32') countdownMsRemaining = 0; // 0 => undefined
+  @type('int32') prepMsRemaining = 0; // 0 => none or not running
+  @type('int32') perPostStageDelayMs = 15000;
+  @type('int32') postStageMsRemaining = 0;
   @type('string') roomId = '';
   // Algodoo client integration
-  @type('int64') clientLastAliveTs = 0; // 0 => unknown
+  @type('number') clientLastAliveTs = 0; // 0 => unknown
   @type(['string']) scenes = new ArraySchema<string>(); // flattened relative paths like "subdir/file.phn"
 }

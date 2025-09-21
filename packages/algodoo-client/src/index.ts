@@ -1,5 +1,6 @@
 import {RawData, WebSocket} from 'ws';
 import fs from 'fs/promises';
+import path from 'path';
 
 interface EnqueueMsg {
   seq: number;
@@ -13,7 +14,8 @@ interface EnqueueMessage {
 
 type ServerMessage = EnqueueMessage;
 type ResetMessage = { type: 'reset' };
-type IncomingServerMessage = ServerMessage | ResetMessage;
+type ScanScenesMessage = { type: 'scan.scenes' };
+type IncomingServerMessage = ServerMessage | ResetMessage | ScanScenesMessage;
 type ClientHello = { type: 'client.hello'; payload?: { version?: string } };
 type ClientAlive = { type: 'client.alive'; payload: { ts: number } };
 type ClientScenes = { type: 'client.scenes'; payload: { root: string; files: string[] } };
@@ -32,11 +34,29 @@ let isResetting = false;
 let resetSeq: number | null = null;
 const pending: EnqueueMsg[] = [];
 let lastOutputSeq = -1;
+let ackPolling = false;
+let outPolling = false;
 
-async function writeAtomic(path: string, data: string): Promise<void> {
-  const tmp = path + '.tmp';
+async function writeAtomic(filePath: string, data: string): Promise<void> {
+  const dir = path.dirname(filePath);
+  try { await fs.mkdir(dir, { recursive: true }); } catch {}
+  const tmp = filePath + '.tmp';
   await fs.writeFile(tmp, data);
-  await fs.rename(tmp, path);
+  try {
+    await fs.rename(tmp, filePath);
+  } catch (e: any) {
+    if (e && (e.code === 'ENOENT' || e.code === 'EXDEV')) {
+      // Retry once: write temp again then rename
+      try {
+        await fs.writeFile(tmp, data);
+        await fs.rename(tmp, filePath);
+      } catch (e2) {
+        throw e2;
+      }
+    } else {
+      throw e;
+    }
+  }
 }
 
 async function loadState() {
@@ -65,25 +85,32 @@ async function loadState() {
 
 // No external sync: we rely on explicit reset to clear output and position.
 
+let writeInputChain: Promise<void> = Promise.resolve();
 async function writeInput() {
-  // If resetting, ensure ONLY the reset line is present in the input file
-  const effective = isResetting && resetSeq != null
-    ? inflight.filter((i) => i.seq === resetSeq)
-    : inflight;
-  const data = effective.map((i) => i.line).join('\n');
-  await writeAtomic(INPUT_PATH, data + (data ? '\n' : ''));
-  // Optional mirror for observability
-  if (INPUT_LOG_PATH) {
-    try {
-      const ts = new Date().toISOString();
-      const log = `[${ts}] writeInput resetting=${isResetting} lines=${effective.length}\n` + (data ? data + '\n' : '');
-      await fs.appendFile(INPUT_LOG_PATH, log);
-    } catch {}
-  }
-  debug('[client] wrote input file:', { path: INPUT_PATH, lines: effective.length, resetting: isResetting, resetSeq });
+  // Serialize writes to avoid race conditions on the same file
+  writeInputChain = writeInputChain.then(async () => {
+    const effective = isResetting && resetSeq != null
+      ? inflight.filter((i) => i.seq === resetSeq)
+      : inflight;
+    const data = effective.map((i) => i.line).join('\n');
+    await writeAtomic(INPUT_PATH, data + (data ? '\n' : ''));
+    if (INPUT_LOG_PATH) {
+      try {
+        const ts = new Date().toISOString();
+        const log = `[${ts}] writeInput resetting=${isResetting} lines=${effective.length}\n` + (data ? data + '\n' : '');
+        await fs.appendFile(INPUT_LOG_PATH, log);
+      } catch {}
+    }
+    debug('[client] wrote input file:', { path: INPUT_PATH, lines: effective.length, resetting: isResetting, resetSeq });
+  }).catch((e) => {
+    console.log('[client] writeInput error:', String(e));
+  });
+  return writeInputChain;
 }
 
 async function pollAck(ws: WebSocket): Promise<void> {
+  if (ackPolling) return;
+  ackPolling = true;
   try {
     const ackContent = await fs.readFile(ACK_PATH, 'utf8');
     const lines = ackContent.trim().split(/\n+/);
@@ -112,13 +139,17 @@ async function pollAck(ws: WebSocket): Promise<void> {
         } catch (e) {
           console.log('[client] failed preparing fresh output after ACK (continuing):', String(e));
         }
-        // Reset internal state
+        // Reset internal state (fresh start) and DROP any buffered commands per protocol
         isResetting = false;
+        const completedResetSeq = resetSeq;
         resetSeq = null;
         lastAck = -1;
         inflight = [];
-        // Move ALL buffered pending enqueues into inflight and write them out
-        while (pending.length) inflight.push(pending.shift()!);
+        pending.splice(0, pending.length);
+        // Clear input so RESET line is not reprocessed
+        try { await writeAtomic(INPUT_PATH, ''); } catch {}
+        // Inform server we completed RESET so it can clear its queue/seq
+        try { ws.send(JSON.stringify({ type: 'reset.ack', payload: { seq: completedResetSeq } })); } catch {}
       } else {
         inflight = inflight.filter((i) => i.seq > lastAck);
       }
@@ -130,6 +161,7 @@ async function pollAck(ws: WebSocket): Promise<void> {
     ws.send(JSON.stringify({ type: 'drain', payload: { lastAck, inflight: inflight.length } }));
     debug('[client] sent drain (no ack file):', { lastAck, inflight: inflight.length });
   }
+  ackPolling = false;
 }
 
 function connect() {
@@ -147,9 +179,9 @@ function connect() {
       const alive: ClientAlive = { type: 'client.alive', payload: { ts: Date.now() } };
       ws.send(JSON.stringify(alive));
     }, 3000);
-    // scan scenes directory and publish
+    // Initial scenes publish and periodic refresh to avoid drift
     scanAndPublishScenes(ws).catch(() => {});
-    setInterval(() => scanAndPublishScenes(ws).catch(() => {}), 15000);
+    setInterval(() => scanAndPublishScenes(ws).catch(() => {}), 30000);
     // Initiate RESET handshake: write a new input.txt containing ONLY "<lastAck+1> RESET"
     resetSeq = (lastAck ?? -1) + 1;
     isResetting = true;
@@ -211,6 +243,10 @@ function connect() {
         await writeInput();
       }
     }
+    if (msg.type === 'scan.scenes') {
+      try { await scanAndPublishScenes(ws); } catch {}
+      return;
+    }
   });
 
   ws.on('close', () => {
@@ -247,8 +283,11 @@ function parseParams(raw: string): unknown[] {
 }
 
 async function pollOutput(ws: WebSocket): Promise<void> {
+  // If resetting, skip without toggling the polling lock
+  if (isResetting) return;
+  if (outPolling) return;
+  outPolling = true;
   try {
-    if (isResetting) return; // do not process outputs while negotiating RESET
     const out = await fs.readFile(OUTPUT_PATH, 'utf8');
     const lines = out.split(/\n+/).filter(Boolean);
     for (const line of lines) {
@@ -273,6 +312,7 @@ async function pollOutput(ws: WebSocket): Promise<void> {
   } catch {
     // ignore missing output file
   }
+  outPolling = false;
 }
 
 async function scanAndPublishScenes(ws: WebSocket): Promise<void> {

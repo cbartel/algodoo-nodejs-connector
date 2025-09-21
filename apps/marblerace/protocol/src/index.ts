@@ -6,6 +6,7 @@ export const protocolVersion = '0.1.0';
 export type Handshake = {
   protocolVersion: string;
   roomId?: string;
+  playerKey?: string; // stable client identity for reconnection
 };
 
 // Race and Stage phases
@@ -15,12 +16,10 @@ export type StagePhase = 'loading' | 'prep' | 'countdown' | 'running' | 'stage_f
 // Clamp ranges for marble parameters (authoritative on server)
 export const clampRanges = {
   // Adjusted to support smaller marbles (meters)
-  radius: { min: 0.02, max: 0.035 },
+  radius: { min: 0.02, max: 0.045 },
   density: { min: 0.5, max: 4.0 },
   friction: { min: 0.0, max: 1.0 },
   restitution: { min: 0.0, max: 1.0 },
-  linearDamping: { min: 0.0, max: 2.0 },
-  angularDamping: { min: 0.0, max: 2.0 },
 };
 
 export type RGB = { r: number; g: number; b: number };
@@ -42,8 +41,6 @@ export type MarbleConfig = {
   density: number;
   friction: number;
   restitution: number;
-  linearDamping: number;
-  angularDamping: number;
   color: RGB;
 };
 
@@ -56,19 +53,16 @@ export function clampConfig(input: PartialMarbleConfig, base: MarbleConfig): Mar
     density: clamp(input.density ?? base.density, r.density.min, r.density.max),
     friction: clamp01(input.friction ?? base.friction),
     restitution: clamp01(input.restitution ?? base.restitution),
-    linearDamping: clamp(input.linearDamping ?? base.linearDamping, r.linearDamping.min, r.linearDamping.max),
-    angularDamping: clamp(input.angularDamping ?? base.angularDamping, r.angularDamping.min, r.angularDamping.max),
     color: isValidRGB(input.color ?? base.color) ? (input.color ?? base.color) : base.color,
   };
 }
 
 export const defaultMarbleConfig: MarbleConfig = {
-  radius: 0.03,
-  density: 1.0,
-  friction: 0.3,
-  restitution: 0.25,
-  linearDamping: 0.1,
-  angularDamping: 0.1,
+  // default to midpoint of clamp ranges
+  radius: (clampRanges.radius.min + clampRanges.radius.max) / 2, // 0.0325 with current ranges
+  density: (clampRanges.density.min + clampRanges.density.max) / 2, // 2.25
+  friction: 0.5,
+  restitution: 0.5,
   color: { r: 255, g: 255, b: 255 },
 };
 
@@ -120,8 +114,8 @@ export type RaceState = {
   autoAdvance: boolean;
   lobbyOpen: boolean;
   players: Record<PlayerId, Player>;
-  // Small rolling events ticker for dashboard (most recent first)
-  ticker: Array<{ ts: number; kind: string; msg: string }>;
+  // Small rolling events ticker for dashboard (most recent first); plain strings
+  ticker: string[];
   countdownMsRemaining?: number; // for countdown phases
   roomId?: string; // exposed to clients for QR deep-link
 };
@@ -129,7 +123,7 @@ export type RaceState = {
 // Client/player messages
 export type ClientMsg =
   | { type: 'handshake'; payload: Handshake }
-  | { type: 'join'; payload: { name: string } }
+  | { type: 'join'; payload: { name: string; color?: RGB } }
   | { type: 'setConfig'; payload: { partial: PartialMarbleConfig } };
 
 // Admin actions (must be authorized by server)
@@ -141,7 +135,10 @@ export type AdminMsg =
   | { type: 'admin/reset' }
   | { type: 'admin/finish' }
   | { type: 'admin/nextStage' }
-  | { type: 'admin/setAutoAdvance'; payload: { auto: boolean } };
+  | { type: 'admin/setAutoAdvance'; payload: { auto: boolean } }
+  | { type: 'admin/removePlayer'; payload: { playerId: string } }
+  | { type: 'admin/setPrepTimeout'; payload: { seconds?: number; ms?: number } }
+  | { type: 'admin/setAutoAdvanceDelay'; payload: { seconds?: number; ms?: number } };
 
 export type AnyIncoming = ClientMsg | AdminMsg;
 
@@ -161,11 +158,11 @@ export type AlgodooEvent =
   | { type: 'stage.timeout'; payload: { stageId: string; ts: number } }
   | { type: 'stage.reset'; payload: { stageId: string } };
 
-export const Ticker = {
-  info(kind: string, msg: string) {
-    return { ts: Date.now(), kind, msg } as const;
-  },
-};
+// Simple formatter for ticker lines (clients may format their own if needed)
+export function formatTicker(kind: string, msg: string, ts = Date.now()): string {
+  const time = new Date(ts).toLocaleTimeString();
+  return `[${time}] ${kind}${msg ? `: ${msg}` : ''}`;
+}
 
 // Deterministic ranking comparator
 export function comparePlayers(a: Player, b: Player): number {
@@ -201,6 +198,6 @@ export function stageCount(state: RaceState): number {
 }
 
 export function pushTicker(state: RaceState, kind: string, msg: string, max = 10) {
-  state.ticker.unshift(Ticker.info(kind, msg));
+  state.ticker.unshift(formatTicker(kind, msg));
   state.ticker = state.ticker.slice(0, max);
 }

@@ -4,11 +4,12 @@ import { connectRoom } from '../lib/colyseus';
 
 export default function Admin() {
   const [room, setRoom] = useState<any>(null);
-  const [stagesText, setStagesText] = useState('');
+  // Selected scenes + custom names (ordered)
   // New tiered points configuration, entered as CSV of "count x points" pairs.
   const [tiersText, setTiersText] = useState('3x10,5x7,2x5');
   const [state, setState] = useState<any>(null);
   const [selectedScenes, setSelectedScenes] = useState<string[]>([]);
+  const [stageNames, setStageNames] = useState<Record<string, string>>({});
   const [token, setToken] = useState<string>(() => localStorage.getItem('mr_admin_token') || 'changeme');
   const [pingInfo, setPingInfo] = useState<{ ok: boolean; rtt: number; age: number } | null>(null);
 
@@ -21,6 +22,22 @@ export default function Admin() {
         alert('Admin action denied: ' + (msg?.reason || 'unknown'));
       });
     });
+  }, []);
+
+  // Rebind on managed reconnection
+  useEffect(() => {
+    const onReconnected = (ev: any) => {
+      const r2 = ev?.detail?.room;
+      if (!r2) return;
+      setRoom(r2);
+      setState(r2.state);
+      r2.onStateChange((newState: any) => setState({ ...newState }));
+      r2.onMessage('admin.denied', (msg: any) => {
+        alert('Admin action denied: ' + (msg?.reason || 'unknown'));
+      });
+    };
+    window.addEventListener('mr:room.reconnected', onReconnected);
+    return () => window.removeEventListener('mr:room.reconnected', onReconnected);
   }, []);
 
   // Poll health for PING roundtrip RTT
@@ -96,14 +113,33 @@ export default function Admin() {
     return tiers;
   }
 
+  function defaultNameFromId(id: string): string {
+    const base = id.split('/').pop() || id;
+    return base.replace(/\.(phn|phz)$/i, '');
+  }
+
   function createRace() {
-    const source = selectedScenes.length ? selectedScenes : stagesText
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const stages = source.map((id) => ({ id }));
+    const source = selectedScenes;
+    const stages = source.map((id) => ({ id, name: (stageNames[id] || '').trim() || defaultNameFromId(id) }));
     const tiers = parseTiers(tiersText);
     sendAdmin('createRace', { stages, tiers });
+  }
+  function moveStage(idx: number, dir: -1 | 1) {
+    setSelectedScenes((prev) => {
+      const next = prev.slice();
+      const j = idx + dir;
+      if (j < 0 || j >= next.length) return prev;
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return next;
+    });
+  }
+  function removeStage(id: string) {
+    setSelectedScenes((prev) => prev.filter((s) => s !== id));
+    setStageNames((prev) => {
+      const n = { ...prev };
+      delete n[id];
+      return n;
+    });
   }
 
   return (
@@ -126,32 +162,66 @@ export default function Admin() {
         <Panel title="Create Race">
           {scenes.length > 0 ? (
             <div>
-              <div style={{ marginBottom: 8 }}>Available scenes from Algodoo client ({scenes.length})</div>
-              <div style={{ maxHeight: 200, overflow: 'auto', border: '3px solid #333', padding: 8 }}>
-                {scenes.map((s) => (
-                  <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedScenes.includes(s)}
-                      onChange={(e) => {
-                        setSelectedScenes((prev) => e.target.checked ? [...prev, s] : prev.filter((x) => x !== s));
-                      }}
-                    />
-                    <span>{s}</span>
-                  </label>
-                ))}
+              <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div>Available scenes from Algodoo client ({scenes.length})</div>
+                <Button onClick={() => sendAdmin('scanScenes')}>Refresh Scenes</Button>
               </div>
-              <div style={{ fontSize: 12, color: '#9df', marginTop: 8 }}>Tip: Select scenes or fall back to manual list below.</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Scenes</div>
+                  <div style={{ maxHeight: 200, overflow: 'auto', border: '3px solid #333', padding: 8 }}>
+                    {scenes.map((s) => (
+                      <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedScenes.includes(s)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedScenes((prev) => prev.includes(s) ? prev : [...prev, s]);
+                              setStageNames((prev) => ({ ...prev, [s]: prev[s] ?? defaultNameFromId(s) }));
+                            } else {
+                              removeStage(s);
+                            }
+                          }}
+                        />
+                        <span>{s}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Selected Stages (order & names)</div>
+                  <div style={{ maxHeight: 200, overflow: 'auto', border: '3px solid #333', padding: 8, display: 'grid', gap: 6 }}>
+                    {selectedScenes.length === 0 && <div style={{ color: '#aaa' }}>No stages selected yet.</div>}
+                    {selectedScenes.map((id, idx) => (
+                      <div key={id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
+                        <input
+                          value={stageNames[id] ?? defaultNameFromId(id)}
+                          onChange={(e) => setStageNames((prev) => ({ ...prev, [id]: e.target.value }))}
+                          placeholder={defaultNameFromId(id)}
+                          style={{ padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
+                        />
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <Button onClick={() => moveStage(idx, -1)} disabled={idx === 0}>Up</Button>
+                          <Button onClick={() => moveStage(idx, +1)} disabled={idx === selectedScenes.length - 1}>Down</Button>
+                          <Button onClick={() => removeStage(id)}>Remove</Button>
+                        </div>
+                        <div style={{ gridColumn: '1 / span 2', fontSize: 12, color: '#9df' }}>{id}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: '#9df', marginTop: 8 }}>Tip: Select scenes, reorder, and rename as needed.</div>
             </div>
           ) : (
             <div style={{ color: '#fc6' }}>No scenes received from client yet.</div>
           )}
-          <div style={{ marginTop: 8 }}>Or enter stages (one id per line)</div>
-          <textarea value={stagesText} onChange={(e) => setStagesText(e.target.value)} rows={4} style={{ width: '100%' }} />
+          {/* Removed manual stage entry; selection + ordering + naming controls above */}
           <div style={{ marginTop: 8 }}>Points Tiers (e.g., 3x10,5x7,2x5)</div>
           <input value={tiersText} onChange={(e) => setTiersText(e.target.value)} style={{ width: '100%' }} />
           <div style={{ marginTop: 8 }}>
-            <Button onClick={createRace}>Create</Button>
+            <Button onClick={createRace} disabled={selectedScenes.length === 0}>Create</Button>
           </div>
         </Panel>
         <Panel title="Controls">
@@ -197,10 +267,13 @@ export default function Admin() {
                   <Button onClick={() => sendAdmin('start')} disabled={!canLoadStage && !canStartCountdown}>
                     {canLoadStage ? 'Load Stage' : canStartCountdown ? 'Start Countdown' : 'Start'}
                   </Button>
+                  <Button onClick={() => sendAdmin('endStageNow')} disabled={!inRunning}>End Stage</Button>
                   <Button onClick={() => sendAdmin('nextStage')} disabled={!canNextStage}>Next Stage</Button>
                   <Button onClick={() => sendAdmin('reset')}>Reset Race</Button>
                   <Button onClick={() => sendAdmin('finish')}>Finish Race</Button>
                 </div>
+                <PrepSettings state={state} sendAdmin={sendAdmin} />
+                <AutoAdvanceSettings state={state} sendAdmin={sendAdmin} />
                 <div style={{ display: 'grid', gap: 6 }}>
                   <Badge>Lobby: {state?.lobbyOpen ? 'Open' : 'Closed'}</Badge>
                   <Badge>Global: {state?.globalPhase}</Badge>
@@ -227,7 +300,7 @@ export default function Admin() {
       <Panel title="Players">
         <div style={{ overflowX: 'auto' }}>
           <Table
-            headers={["Name","Spawned","Stage Pts","Total","Radius","Density","Friction","Restitution","Color"]}
+            headers={["Name","Spawned","Stage Pts","Total","Radius","Density","Friction","Restitution","Color","Actions"]}
             rows={(players as any[]).map((p) => {
               const idx = typeof state?.stageIndex === 'number' ? state.stageIndex : -1;
               const pts = (p?.results?.[idx]?.points ?? 0);
@@ -243,11 +316,52 @@ export default function Admin() {
                 (p.config?.friction ?? 0).toFixed(2),
                 (p.config?.restitution ?? 0).toFixed(2),
                 <span key="c" title={swatch} style={{ display: 'inline-block', width: 18, height: 18, borderRadius: '50%', border: '3px solid #333', background: swatch }} />,
+                <Button key="remove" onClick={() => sendAdmin('removePlayer', { playerId: p.id })}>Remove</Button>,
               ];
             })}
           />
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function PrepSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
+  const [seconds, setSeconds] = React.useState<number>(() => Math.max(0, Math.round((state?.perPrepTimeoutMs || 60000)/1000)));
+  React.useEffect(() => {
+    setSeconds(Math.max(0, Math.round((state?.perPrepTimeoutMs || 60000)/1000)));
+  }, [state?.perPrepTimeoutMs]);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <Badge>Prep limit: {Math.max(0, Math.round((state?.perPrepTimeoutMs || 0)/1000))}s</Badge>
+      <input
+        type="number"
+        min={0}
+        value={seconds}
+        onChange={(e) => setSeconds(Math.max(0, Number(e.target.value) || 0))}
+        style={{ width: 100, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
+      />
+      <Button onClick={() => sendAdmin('setPrepTimeout', { seconds })}>Set Prep Limit</Button>
+    </div>
+  );
+}
+
+function AutoAdvanceSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
+  const [seconds, setSeconds] = React.useState<number>(() => Math.max(0, Math.round((state?.perPostStageDelayMs || 15000)/1000)));
+  React.useEffect(() => {
+    setSeconds(Math.max(0, Math.round((state?.perPostStageDelayMs || 15000)/1000)));
+  }, [state?.perPostStageDelayMs]);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <Badge>Auto-advance in: {Math.max(0, Math.round((state?.perPostStageDelayMs || 0)/1000))}s</Badge>
+      <input
+        type="number"
+        min={0}
+        value={seconds}
+        onChange={(e) => setSeconds(Math.max(0, Number(e.target.value) || 0))}
+        style={{ width: 120, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
+      />
+      <Button onClick={() => sendAdmin('setAutoAdvanceDelay', { seconds })}>Set Auto-Advance Delay</Button>
     </div>
   );
 }

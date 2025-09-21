@@ -66,6 +66,7 @@ let seqCounter = 0;
 function nextSeq() { return seqCounter++; }
 function serializeParams(p: string): string { return p.replace(/\n/g, '\\n').replace(/\r/g, '\\r'); }
 const pendingAcks = new Map<number, { resolve: (v: { seq: number }) => void; reject: (err: Error) => void; timer?: NodeJS.Timeout }>();
+let isResetting = false;
 
 export function submitEval(thyme: string): { ok: boolean; seq?: number; reason?: string } {
   if (!algodooClient || algodooClient.readyState !== WebSocket.OPEN) {
@@ -236,6 +237,12 @@ export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOp
         // Internal: track algodoo-client and process drain acks
         if ((msg as any)?.type === 'client.hello') {
           if (algodooClient !== ws) algodooClient = ws;
+          // On hello, re-enqueue any outstanding inflight items to this client
+          try {
+            for (const item of inflight) {
+              if (ws.readyState === WebSocket.OPEN) send(ws, { type: 'enqueue', payload: { seq: item.seq, line: item.line } });
+            }
+          } catch {}
         } else if ((msg as any)?.type === 'drain') {
           const ack = Number((msg as any)?.payload?.lastAck ?? -1);
           if (algodooClient !== ws) algodooClient = ws;
@@ -252,6 +259,17 @@ export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOp
               }
             }
           }
+        } else if ((msg as any)?.type === 'reset.ack') {
+          // Client completed RESET handshake: clear inflight and reset counters
+          inflight = [];
+          lastAck = -1;
+          seqCounter = 0;
+          isResetting = false;
+          for (const [, waiter] of pendingAcks) {
+            try { waiter.reject(new Error('reset')); } catch {}
+          }
+          pendingAcks.clear();
+          srvDebug('reset.ack received; cleared queue and reset seqCounter=0');
         } else if ((msg as any)?.type === 'output') {
           if (algodooClient !== ws) algodooClient = ws;
           try { srvDebug('ws:output', { seq: (msg as any)?.payload?.seq, cmd: (msg as any)?.payload?.cmd }); } catch {}

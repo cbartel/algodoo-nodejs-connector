@@ -40,44 +40,32 @@ export class Orchestrator {
     requestClientReset();
   }
 
-  /**
-   * spawnMarbles: Spawn one marble per player with the server-clamped config.
-   *
-   * Called when transitioning to stagePhase 'ready'. Algodoo must:
-   *  - Spawn marbles at the start area with specified physics parameters.
-   *  - Assign a unique marker linking marble to `playerId`.
-   *  - Do not start movement yet.
-   */
-  async spawnMarbles(players: Array<Pick<Player, 'id' | 'name' | 'config'>>): Promise<void> {
-    this.log('spawnMarbles', players.length);
-    void players;
-    // TODO: submit Thyme to spawn marbles and tag them with player IDs.
-  }
-
   async spawnMarble(player: Pick<Player, 'id' | 'name' | 'config'>): Promise<void> {
     this.log('spawnMarble', player.id);
     const color = player.config.color;
     const r = (color.r/255).toFixed(7);
     const g = (color.g/255).toFixed(7);
     const b = (color.b/255).toFixed(7);
+    const restitution = player.config.restitution.toFixed(7);
+    const density = player.config.density.toFixed(7);
+    const friction = player.config.friction.toFixed(7);
 
     const radius = player.config.radius.toFixed(7);
-    // TODO: submit Thyme to spawn a single marble tagged with player.id
     const thyme = `
     spawnMarble = () => {
         marble = scene.addCircle({
-            restitution := 0.50000000;
+            restitution := ${restitution};
             killer := true;
             immortal := true;
             area := 3.1415927;
             collideSet := 63;
             drawBorder := false;
-            friction := 0.0000000;
+            friction := ${friction};
             color := [${r}, ${g}, ${b}, 1.0000000];
             onHitByLaser := (e)=>{};
             drawCake := false;
             pos := scene.my.spawn;
-            density := 2.0000000;
+            density := ${density};
             radius := ${radius};
             _name := "${player.id}";
             layer := 0
