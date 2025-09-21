@@ -10,6 +10,7 @@ export default function Admin() {
   const [state, setState] = useState<any>(null);
   const [selectedScenes, setSelectedScenes] = useState<string[]>([]);
   const [stageNames, setStageNames] = useState<Record<string, string>>({});
+  const [stageRepeats, setStageRepeats] = useState<Record<string, number>>({});
   const [token, setToken] = useState<string>(() => localStorage.getItem('mr_admin_token') || 'changeme');
   const [pingInfo, setPingInfo] = useState<{ ok: boolean; rtt: number; age: number } | null>(null);
 
@@ -120,7 +121,11 @@ export default function Admin() {
 
   function createRace() {
     const source = selectedScenes;
-    const stages = source.map((id) => ({ id, name: (stageNames[id] || '').trim() || defaultNameFromId(id) }));
+    const stages = source.map((id) => ({
+      id,
+      name: (stageNames[id] || '').trim() || defaultNameFromId(id),
+      repeats: Math.max(1, Number(stageRepeats[id] ?? 1) | 0),
+    }));
     const tiers = parseTiers(tiersText);
     sendAdmin('createRace', { stages, tiers });
   }
@@ -137,6 +142,11 @@ export default function Admin() {
     setSelectedScenes((prev) => prev.filter((s) => s !== id));
     setStageNames((prev) => {
       const n = { ...prev };
+      delete n[id];
+      return n;
+    });
+    setStageRepeats((prev) => {
+      const n = { ...prev } as any;
       delete n[id];
       return n;
     });
@@ -194,19 +204,27 @@ export default function Admin() {
                   <div style={{ maxHeight: 200, overflow: 'auto', border: '3px solid #333', padding: 8, display: 'grid', gap: 6 }}>
                     {selectedScenes.length === 0 && <div style={{ color: '#aaa' }}>No stages selected yet.</div>}
                     {selectedScenes.map((id, idx) => (
-                      <div key={id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
+                      <div key={id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', alignItems: 'center', gap: 8 }}>
                         <input
                           value={stageNames[id] ?? defaultNameFromId(id)}
                           onChange={(e) => setStageNames((prev) => ({ ...prev, [id]: e.target.value }))}
                           placeholder={defaultNameFromId(id)}
                           style={{ padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
                         />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: '#6cf' }}>Repeats</span>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <Button onClick={() => setStageRepeats((prev) => ({ ...prev, [id]: Math.max(1, (Number(prev[id] ?? 1) | 0) - 1) }))}>-</Button>
+                            <span style={{ minWidth: 24, textAlign: 'center' }}>{Math.max(1, Number(stageRepeats[id] ?? 1) | 0)}</span>
+                            <Button onClick={() => setStageRepeats((prev) => ({ ...prev, [id]: Math.max(1, (Number(prev[id] ?? 1) | 0) + 1) }))}>+</Button>
+                          </div>
+                        </div>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <Button onClick={() => moveStage(idx, -1)} disabled={idx === 0}>Up</Button>
                           <Button onClick={() => moveStage(idx, +1)} disabled={idx === selectedScenes.length - 1}>Down</Button>
                           <Button onClick={() => removeStage(id)}>Remove</Button>
                         </div>
-                        <div style={{ gridColumn: '1 / span 2', fontSize: 12, color: '#9df' }}>{id}</div>
+                        <div style={{ gridColumn: '1 / span 3', fontSize: 12, color: '#9df' }}>{id}</div>
                       </div>
                     ))}
                   </div>
@@ -220,6 +238,9 @@ export default function Admin() {
           {/* Removed manual stage entry; selection + ordering + naming controls above */}
           <div style={{ marginTop: 8 }}>Points Tiers (e.g., 3x10,5x7,2x5)</div>
           <input value={tiersText} onChange={(e) => setTiersText(e.target.value)} style={{ width: '100%' }} />
+          <div style={{ marginTop: 8, color: '#9df' }}>
+            Total stages to run: {selectedScenes.reduce((sum, id) => sum + Math.max(1, Number(stageRepeats[id] ?? 1) | 0), 0)}
+          </div>
           <div style={{ marginTop: 8 }}>
             <Button onClick={createRace} disabled={selectedScenes.length === 0}>Create</Button>
           </div>

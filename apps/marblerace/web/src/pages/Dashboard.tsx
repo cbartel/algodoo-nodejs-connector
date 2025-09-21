@@ -96,12 +96,16 @@ export default function Dashboard() {
           const r = p?.results?.[i];
           perStage.push(Number(r?.points ?? 0));
         }
+        const col = p?.config?.color || { r: 255, g: 255, b: 255 };
+        const colorHex = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
         return {
+          id: p?.id,
           name: p?.name,
           total: Number(p?.totalPoints ?? 0),
           best: p?.bestPlacement || 9999,
           earliest: (p?.earliestBestStageIndex ?? -1) >= 0 ? p.earliestBestStageIndex : 9999,
           perStage,
+          colorHex,
         };
       })
       .sort((a: any, b: any) => (b.total - a.total) || (a.best - b.best) || (a.earliest - b.earliest) || safeName(a.name).localeCompare(safeName(b.name)));
@@ -111,9 +115,9 @@ export default function Dashboard() {
   const link = `${publicBase || window.location.origin}/game`;
   const displayEvents = eventsObs;
 
-  // Compute Top 3 for current finished stage
+  // Compute Top 3 scorers for the current stage (by stage points desc)
   const top3 = useMemo(() => {
-    if (!s) return [] as Array<{ name: string; placement: number; points: number }>;
+    if (!s) return [] as Array<{ id: string; name: string; placement: number; points: number; colorHex: string }>;
     const idx = typeof s?.stageIndex === 'number' ? s.stageIndex : -1;
     const arr: any[] = [];
     const players = s?.players;
@@ -121,18 +125,27 @@ export default function Dashboard() {
       if (players && typeof players.forEach === 'function') {
         players.forEach((p: any) => {
           const r = p?.results?.[idx];
+          const points = Number(r?.points ?? 0);
           const placement = Number(r?.placement ?? 0);
-          if (placement > 0) arr.push({ name: p?.name, placement, points: Number(r?.points ?? 0) });
+          const col = p?.config?.color || { r: 255, g: 255, b: 255 };
+          const colorHex = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
+          if (points > 0) arr.push({ id: p?.id, name: p?.name, placement, points, colorHex });
         });
       } else {
         Object.values(players || {}).forEach((p: any) => {
           const r = p?.results?.[idx];
+          const points = Number(r?.points ?? 0);
           const placement = Number(r?.placement ?? 0);
-          if (placement > 0) arr.push({ name: p?.name, placement, points: Number(r?.points ?? 0) });
+          const col = p?.config?.color || { r: 255, g: 255, b: 255 };
+          const colorHex = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
+          if (points > 0) arr.push({ id: p?.id, name: p?.name, placement, points, colorHex });
         });
       }
     } catch {}
-    return arr.sort((a, b) => a.placement - b.placement).slice(0, 3);
+    // Sort by points descending, break ties by better placement then name
+    return arr
+      .sort((a, b) => (b.points - a.points) || ((a.placement || 9999) - (b.placement || 9999)) || String(a.name||'').localeCompare(String(b.name||'')))
+      .slice(0, 3);
   }, [s, ver]);
 
   // Compute current stage reward pool and remaining unclaimed rewards as badges
@@ -246,11 +259,14 @@ export default function Dashboard() {
             <div style={{ fontSize: 72, fontWeight: 900, color: '#fc6', textShadow: '0 0 12px #630', marginBottom: 12 }}>
               {Math.max(0, Math.ceil((s?.postStageMsRemaining || 0) / 1000))}
             </div>
-            <div style={{ fontSize: 16, color: '#9df', marginBottom: 8 }}>Top 3</div>
+            <div style={{ fontSize: 16, color: '#9df', marginBottom: 8 }}>Top 3 (Stage Points)</div>
             <ol style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               {top3.map((t, i) => (
-                <li key={i} style={{ fontSize: 20, color: i===0 ? '#ffd700' : i===1 ? '#c0c0c0' : '#cd7f32', margin: '4px 0' }}>
-                  #{t.placement} {t.name} {t.points ? `(+${t.points})` : ''}
+                <li key={i} style={{ fontSize: 20, color: i===0 ? '#ffd700' : i===1 ? '#c0c0c0' : '#cd7f32', margin: '4px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>{i+1}.</span>
+                  <span title="player color" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: t.colorHex }} />
+                  <span>{t.name}</span>
+                  <span>{t.points ? `(+${t.points})` : ''}</span>
                 </li>
               ))}
             </ol>
@@ -310,7 +326,15 @@ export default function Dashboard() {
         <Panel title="Standings">
           <Table
             headers={["#", "Player", ...Array.from({ length: s?.stages?.length || 0 }).map((_, i) => `S${i+1}`), "Total"]}
-            rows={standings.map((p: any, i: number) => [i+1, p.name, ...(p.perStage || []), p.total])}
+            rows={standings.map((p: any, i: number) => [
+              i+1,
+              <span key={`${p.id||p.name}-name`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span title="player color" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: p.colorHex }} />
+                <span>{p.name}</span>
+              </span>,
+              ...(p.perStage || []),
+              p.total
+            ])}
           />
         </Panel>
         <Panel title="Events">

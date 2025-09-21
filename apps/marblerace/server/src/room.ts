@@ -335,10 +335,13 @@ export class RaceRoom extends Room<RaceStateSchema> {
     // reset stages array
     this.state.stages.splice(0, this.state.stages.length);
     for (const s of stages) {
-      const ss = new StageSchema();
-      ss.id = s.id;
-      ss.name = s.name ?? '';
-      this.state.stages.push(ss);
+      const repeats = Math.max(1, Math.min(1000, Number((s as any)?.repeats ?? 1) | 0));
+      for (let i = 0; i < repeats; i++) {
+        const ss = new StageSchema();
+        ss.id = s.id;
+        ss.name = s.name ?? '';
+        this.state.stages.push(ss);
+      }
     }
     this.state.stageIndex = -1;
     this.state.stagePhase = 'loading';

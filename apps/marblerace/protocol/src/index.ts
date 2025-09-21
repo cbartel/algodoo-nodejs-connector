@@ -79,6 +79,9 @@ export type PointsConfig = PointsTier[];
 export type StageConfig = {
   id: string; // maps to Algodoo scene identifier
   name?: string;
+  // Optional number of times to run this stage consecutively during the race setup.
+  // Server may expand this into repeated entries; default is 1.
+  repeats?: number;
 };
 
 export type PlayerId = string;
