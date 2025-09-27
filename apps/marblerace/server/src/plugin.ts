@@ -14,12 +14,16 @@ const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:plugin]', ...args);
 const debug = (...args: unknown[]) => { if (LOG_LEVEL === 'debug') console.log('[mr:plugin]', ...args); };
 const pluginHealth: { get?: () => { lastPingAt: number; lastPingRtt: number; pingOk: boolean } } = {};
+// Cache resolved web dir to avoid repeated filesystem checks and logs
+let cachedWebDir: string | null = null;
+let loggedWebDirOnce = false;
 
 // Track output sequence stats from algodoo-client
 let lastOutputSeqReceived = -1;
 let outputSeqGaps = 0;
 
 function resolveWebDir(): string {
+  if (cachedWebDir) return cachedWebDir;
   const candidates: string[] = [];
   try {
     // @ts-ignore import.meta in ESM build
@@ -39,14 +43,16 @@ function resolveWebDir(): string {
   for (const c of candidates) {
     const idx = path.join(c, 'index.html');
     if (fs.existsSync(idx)) {
-      log('resolveWebDir chose:', c);
-      return c;
+      cachedWebDir = c;
+      if (!loggedWebDirOnce) { log('resolveWebDir chose:', c); loggedWebDirOnce = true; }
+      return cachedWebDir;
     }
   }
   // fall back to the first candidate if none exist (handler will 500)
   const fallback = candidates[0] ?? path.resolve(process.cwd(), 'apps/marblerace/web/dist');
-  log('resolveWebDir fallback:', fallback);
-  return fallback;
+  cachedWebDir = fallback;
+  if (!loggedWebDirOnce) { log('resolveWebDir fallback:', fallback); loggedWebDirOnce = true; }
+  return cachedWebDir;
 }
 
 function sendFile(res: ServerResponse, file: string, ctype?: string, cacheSeconds?: number) {

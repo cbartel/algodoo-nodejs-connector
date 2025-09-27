@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Panel, Table, Badge, Countdown, QR } from 'marblerace-ui-kit';
 import { connectRoom, getServerConfig } from '../lib/colyseus';
 
@@ -7,10 +7,15 @@ export default function Dashboard() {
   const [ver, setVer] = useState(0);
   const [publicBase, setPublicBase] = useState<string | null>(null);
   const [eventsObs, setEventsObs] = useState<string[]>([]);
-  // Reward-claim animation state
-  const [claimAnim, setClaimAnim] = useState<null | { pts: number; tier: number; ts: number }>(null);
-  const [lastClaimedCount, setLastClaimedCount] = useState<number>(0);
-  const [didMount, setDidMount] = useState(false);
+  // Reward claim burst system (handles many simultaneous claims)
+  const [claimBursts, setClaimBursts] = useState<Array<{ id: number; pts: number; name: string; color: string; left: number; top: number }>>([]);
+  const burstIdRef = useRef(1);
+  const lastStageRef = useRef<number>(-1);
+  const lastStagePointsByPlayerRef = useRef<Record<string, number>>({});
+  const nameRefs = useRef<Record<string, HTMLElement | null>>({});
+  const standingsRef = useRef<HTMLDivElement | null>(null);
+  const [rowHighlights, setRowHighlights] = useState<Array<{ id: number; left: number; top: number; width: number; height: number; color: string }>>([]);
+  const s: any = room?.state as any;
 
   useEffect(() => {
     connectRoom().then((r) => {
@@ -80,9 +85,86 @@ export default function Dashboard() {
       window.removeEventListener('mr:room.reconnected', onReconnected);
     };
   }, []);
-  useEffect(() => { setDidMount(true); }, []);
+  // Detect per-player stage points increases and spawn bursts
+  useEffect(() => {
+    if (!s) return;
+    const idx = typeof s?.stageIndex === 'number' ? s.stageIndex : -1;
+    const prevStage = lastStageRef.current;
+    // If stage changed, snapshot current points and reset baseline without animating
+    if (idx !== prevStage) {
+      const baseline: Record<string, number> = {};
+      try {
+        const players = s?.players;
+        const each = (fn: (p: any) => void) => {
+          if (players && typeof players.forEach === 'function') { players.forEach(fn); }
+          else { Object.values(players || {}).forEach((p: any) => fn(p)); }
+        };
+        each((p: any) => { baseline[p?.id] = Number(p?.results?.[idx]?.points || 0); });
+      } catch {}
+      lastStagePointsByPlayerRef.current = baseline;
+      lastStageRef.current = idx;
+      return;
+    }
+    // Compare and emit bursts for increases
+    const newly: Array<{ id: number; pts: number; name: string; color: string; left: number; top: number }> = [];
+    try {
+      const players = s?.players;
+      const each = (fn: (p: any) => void) => {
+        if (players && typeof players.forEach === 'function') { players.forEach(fn); }
+        else { Object.values(players || {}).forEach((p: any) => fn(p)); }
+      };
+      each((p: any) => {
+        if (!p) return;
+        const pid = String(p?.id || '');
+        const curr = Number(p?.results?.[idx]?.points || 0);
+        const prev = Number(lastStagePointsByPlayerRef.current[pid] || 0);
+        if (curr > prev) {
+          const delta = curr - prev;
+          const col = p?.config?.color || { r: 108, g: 207, b: 255 };
+          const color = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
+          const id = burstIdRef.current++;
+          // Try to anchor to the player's name cell in Standings
+          const el = nameRefs.current[pid] as HTMLElement | undefined | null;
+          let left = 0, top = 0;
+          if (el) {
+            const r = el.getBoundingClientRect();
+            left = Math.round(r.right + 16);
+            top = Math.round(r.top + r.height / 2);
+            // Also add a subtle row highlight spanning the standings table width
+            try {
+              const tableRect = standingsRef.current?.getBoundingClientRect();
+              const hlLeft = Math.round((tableRect?.left ?? (r.left - 8)));
+              const hlWidth = Math.round((tableRect?.width ?? (r.width + 16)));
+              const hlTop = Math.round(r.top - 4);
+              const hlHeight = Math.round(r.height + 8);
+              const hlId = id * 1000 + 1;
+              setRowHighlights((arr) => [...arr, { id: hlId, left: hlLeft, top: hlTop, width: hlWidth, height: hlHeight, color }]);
+              setTimeout(() => {
+                setRowHighlights((arr) => arr.filter((it) => it.id !== hlId));
+              }, 1400);
+            } catch {}
+          } else {
+            // Fallback: scatter in a non-intrusive band
+            left = Math.round(window.innerWidth * (0.6 + ((id * 17) % 30) / 100));
+            top = Math.round(window.innerHeight * (0.12 + ((id * 23) % 24) / 100));
+          }
+          newly.push({ id, pts: delta, name: String(p?.name || 'Player'), color, left, top });
+        }
+        lastStagePointsByPlayerRef.current[pid] = curr;
+      });
+    } catch {}
+    if (newly.length) {
+      setClaimBursts((arr) => [...arr, ...newly]);
+      // Schedule auto-remove for each new burst
+      newly.forEach((b) => {
+        const ttl = 1600 + ((b.id % 4) * 120);
+        setTimeout(() => {
+          setClaimBursts((arr) => arr.filter((it) => it.id !== b.id));
+        }, ttl);
+      });
+    }
+  }, [s, ver]);
 
-  const s: any = room?.state as any;
   const standings = useMemo(() => {
     if (!s) return [] as any[];
     const playersArr: any[] = [];
@@ -269,26 +351,8 @@ export default function Dashboard() {
     return { pool, remaining, claimedCount };
   }, [s, ver]);
 
-  // Trigger celebratory animation when a new reward is claimed
-  useEffect(() => {
-    if (!didMount) return; // avoid firing on first mount
-    const curr = Number(rewards?.claimedCount || 0);
-    const prev = Number(lastClaimedCount || 0);
-    if (curr > prev) {
-      // Determine the first newly-claimed badge from the pool
-      const idx = prev;
-      const info = (rewards?.pool || [])[idx] || { points: 0, tier: 3 };
-      setClaimAnim({ pts: Number(info.points || 0), tier: Number(info.tier || 3), ts: Date.now() });
-      // Clear animation after a short burst
-      const t = setTimeout(() => setClaimAnim(null), 1800);
-      return () => clearTimeout(t);
-    }
-  }, [rewards?.claimedCount]);
-
-  useEffect(() => {
-    // Keep last seen count in sync (after we check for increase)
-    setLastClaimedCount(Number(rewards?.claimedCount || 0));
-  }, [rewards?.claimedCount]);
+  // Note: reward pool/claimedCount still used for on-screen badges, but
+  // animations now react to per-player deltas for better concurrency.
 
   const badgeColorForTier = (tier: number) => {
     // Tier 0: gold, 1: silver, 2: bronze, others: cyan
@@ -322,63 +386,65 @@ export default function Dashboard() {
 
   return (
     <div style={{ padding: 16 }}>
-      {/* Reward Claim Celebration Overlay */}
-      {claimAnim && (() => {
-        const color = claimAnim.tier === 0 ? '#ffd700' : claimAnim.tier === 1 ? '#c0c0c0' : claimAnim.tier === 2 ? '#cd7f32' : '#6cf';
-        const glow = claimAnim.tier === 0 ? '#ffdf70' : claimAnim.tier === 1 ? '#e0e0e0' : claimAnim.tier === 2 ? '#f0b07a' : '#8fe3ff';
-        const emoji = claimAnim.tier === 0 ? '🏆' : claimAnim.tier === 1 ? '🥈' : claimAnim.tier === 2 ? '🥉' : '🎖️';
-        const pieces = 48;
-        return (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 2000, pointerEvents: 'none' }}>
-            {/* Dim background for focus */}
-            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', animation: 'fadeInOut 1.8s ease forwards' }} />
-            {/* Pop badge */}
-            <div style={{ position: 'absolute', left: '50%', top: '46%', transform: 'translate(-50%,-50%)', filter: 'drop-shadow(0 6px 18px rgba(0,0,0,0.8))' }}>
+      {/* Reward Claim Bursts (supports many simultaneous claims) */}
+      {claimBursts.length > 0 && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 2000, pointerEvents: 'none' }}>
+          {/* row highlights */}
+          {rowHighlights.map((h) => (
+            <div key={`hl-${h.id}`} style={{
+              position: 'fixed',
+              left: h.left,
+              top: h.top,
+              width: h.width,
+              height: h.height,
+              background: `${h.color}22`,
+              boxShadow: `inset 0 0 0 2px ${h.color}55, 0 0 14px ${h.color}33` ,
+              borderRadius: 6,
+              animation: 'rowPulse 1s ease-in-out 1'
+            }} />
+          ))}
+          {claimBursts.map((b) => (
+            <div key={b.id} style={{ position: 'fixed', left: b.left, top: b.top, transform: 'translate(-50%,-50%)' }}>
+              {/* badge chip */}
               <div style={{
-                border: `6px solid ${color}`,
-                background: '#0d1117',
-                padding: '10px 14px',
-                display: 'flex', alignItems: 'center', gap: 10,
-                boxShadow: `0 0 0 3px #000 inset, 0 0 24px ${glow}`,
-                animation: 'claimPop 280ms cubic-bezier(.2,1.4,.3,1) both, floatUp 1.4s ease-out 300ms both'
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: '#0e131a', border: `4px solid ${b.color}`,
+                boxShadow: `0 0 0 2px #000 inset, 0 0 20px ${b.color}55`,
+                padding: '6px 10px', borderRadius: 6,
+                animation: 'burstPop 260ms cubic-bezier(.2,1.4,.3,1) both, burstFloat 1.3s ease-out 260ms both'
               }}>
-                <span style={{ fontSize: 26 }}>{emoji}</span>
-                <span style={{ fontWeight: 1000, fontSize: 28, color }}>{`+${claimAnim.pts}`}</span>
+                <span style={{ width: 10, height: 10, background: b.color, borderRadius: '50%', boxShadow: `0 0 8px ${b.color}aa` }} />
+                <span style={{ color: '#cde', fontSize: 13, fontWeight: 700, textShadow: '0 1px 0 #000' }}>{b.name}</span>
+                <span style={{ color: b.color, fontWeight: 1000, fontSize: 18, textShadow: '0 1px 0 #000' }}>+{b.pts}</span>
+              </div>
+              {/* confetti fan */}
+              <div aria-hidden style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)' }}>
+                {Array.from({ length: 24 }).map((_, i) => {
+                  const a = (360 / 24) * i;
+                  const dist = 40 + ((i * 13) % 20);
+                  const hue = (i * 33) % 360;
+                  return (
+                    <span key={i} style={{
+                      position: 'absolute',
+                      width: 6, height: 3,
+                      background: `hsl(${hue} 90% 60%)`,
+                      borderRadius: 2,
+                      transform: `translate(-50%,-50%) rotate(${a}deg) translateX(${dist}px)`,
+                      animation: `confFan 900ms ease-out ${i*0.008}s both`
+                    }} />
+                  );
+                })}
               </div>
             </div>
-            {/* Confetti burst */}
-            <div aria-hidden>
-              {Array.from({ length: pieces }).map((_, i) => {
-                const size = 6 + ((i * 13) % 8);
-                const hue = (i * 47) % 360;
-                const left = 20 + ((i * 127) % 60); // 20%..80%
-                const rot = (i * 37) % 360;
-                const delay = (i % 8) * 0.02;
-                return (
-                  <span key={i} style={{
-                    position: 'absolute',
-                    left: `${left}%`,
-                    top: '50%',
-                    width: size,
-                    height: size * 0.6,
-                    background: `hsl(${hue} 90% 60%)`,
-                    transform: `rotate(${rot}deg)`,
-                    borderRadius: 2,
-                    boxShadow: '0 0 8px rgba(0,0,0,0.3)',
-                    animation: `confetti 1.2s cubic-bezier(.2,.7,.2,1) ${delay}s both`
-                  }} />
-                );
-              })}
-            </div>
-            <style>{`
-              @keyframes claimPop { 0% { transform: scale(.6) } 80% { transform: scale(1.04) } 100% { transform: scale(1) } }
-              @keyframes floatUp { to { transform: translate(-50%,-70%) } }
-              @keyframes confetti { 0% { opacity: 0; transform: translateY(0) scale(1) rotate(0deg) } 10% { opacity: 1 } 100% { opacity: 0; transform: translateY(-320px) scale(.9) rotate(360deg) } }
-              @keyframes fadeInOut { 0% { opacity: 0 } 10% { opacity: 1 } 90% { opacity: 1 } 100% { opacity: 0 } }
-            `}</style>
-          </div>
-        );
-      })()}
+          ))}
+          <style>{`
+            @keyframes burstPop { 0% { transform: scale(.7) } 80% { transform: scale(1.06) } 100% { transform: scale(1) } }
+            @keyframes burstFloat { to { transform: translate(-50%,-85%) } }
+            @keyframes confFan { 0% { opacity: 0; transform: translate(-50%,-50%) rotate(var(--a,0)) translateX(0) } 10% { opacity: 1 } 100% { opacity: 0; transform: translate(-50%,-50%) rotate(var(--a,0)) translateX(80px) } }
+            @keyframes rowPulse { 0%,100% { opacity: .0 } 20% { opacity: .9 } 60% { opacity: .5 } }
+          `}</style>
+        </div>
+      )}
       {/* Big Fancy Countdown Overlay */}
       {(() => {
         const ms = Number(s?.countdownMsRemaining || 0);
@@ -695,11 +761,16 @@ export default function Dashboard() {
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 12 }}>
         <Panel title="Standings">
+          <div ref={standingsRef}>
           <Table
             headers={["#", "Player", ...Array.from({ length: s?.stages?.length || 0 }).map((_, i) => `S${i+1}`), "Total"]}
             rows={standings.map((p: any, i: number) => [
               i+1,
-              <span key={`${p.id||p.name}-name`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span
+                key={`${p.id||p.name}-name`}
+                ref={(el) => { if (el) nameRefs.current[String(p.id||p.name)] = el; }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
                 <span title="player color" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: p.colorHex }} />
                 <span>{p.name}</span>
               </span>,
@@ -707,6 +778,7 @@ export default function Dashboard() {
               p.total
             ])}
           />
+          </div>
         </Panel>
         <Panel title="Events">
           <ul>
