@@ -46,6 +46,7 @@ export class PlayerSchema extends Schema {
 
 export class RaceStateSchema extends Schema {
   @type('string') protocolVersion = '';
+  @type('string') title = 'Marble Race';
   @type('string') globalPhase: 'lobby' | 'intermission' | 'countdown' | 'running' | 'finished' = 'lobby';
   @type([StageSchema]) stages = new ArraySchema<StageSchema>();
   @type('int16') stageIndex = -1;
@@ -66,7 +67,12 @@ export class RaceStateSchema extends Schema {
   @type('int32') perPostStageDelayMs = 15000;
   @type('int32') postStageMsRemaining = 0;
   @type('string') roomId = '';
+  @type('boolean') enforceUniqueColors = true;
   // Algodoo client integration
   @type('number') clientLastAliveTs = 0; // 0 => unknown
   @type(['string']) scenes = new ArraySchema<string>(); // flattened relative paths like "subdir/file.phn"
+  // Award ceremony controls (admin-triggered)
+  @type('boolean') ceremonyActive = false; // dashboards start ceremony when true
+  @type('int32') ceremonyDwellMs = 10000;  // per-player dwell ms (winner may linger longer client-side)
+  @type('int32') ceremonyVersion = 0;      // increment to retrigger ceremony across dashboards
 }

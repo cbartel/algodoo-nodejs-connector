@@ -13,6 +13,8 @@ export default function Admin() {
   const [stageRepeats, setStageRepeats] = useState<Record<string, number>>({});
   const [token, setToken] = useState<string>(() => localStorage.getItem('mr_admin_token') || 'changeme');
   const [pingInfo, setPingInfo] = useState<{ ok: boolean; rtt: number; age: number } | null>(null);
+  const [titleDraft, setTitleDraft] = useState<string>('');
+  const titleDebounceRef = React.useRef<any>(null);
 
   useEffect(() => {
     connectRoom().then((r) => {
@@ -40,6 +42,11 @@ export default function Admin() {
     window.addEventListener('mr:room.reconnected', onReconnected);
     return () => window.removeEventListener('mr:room.reconnected', onReconnected);
   }, []);
+
+  // Sync local caption draft with server state
+  useEffect(() => {
+    setTitleDraft(String((state as any)?.title || 'Marble Race'));
+  }, [state?.title]);
 
   // Poll health for PING roundtrip RTT
   useEffect(() => {
@@ -262,6 +269,51 @@ export default function Admin() {
               : '-';
             return (
               <div style={{ display: 'grid', gap: 10 }}>
+                {/* Caption editor and live preview */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ color: '#9df' }}>Caption:</div>
+                  <input
+                    value={titleDraft}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTitleDraft(v);
+                      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+                      titleDebounceRef.current = setTimeout(() => {
+                        sendAdmin('setTitle', { title: v });
+                      }, 300);
+                    }}
+                    placeholder="Enter race title"
+                    style={{ minWidth: 220, padding: 8, border: '3px solid #333', background: '#14161b', color: '#fff' }}
+                  />
+                  {/* Live styled preview */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#0b0f15', border: '4px solid #6cf', boxShadow: '0 0 0 2px #036 inset' }}>
+                    <span style={{
+                      fontWeight: 1000,
+                      fontSize: 20,
+                      background: 'linear-gradient(90deg,#9cf,#fff,#9cf)',
+                      WebkitBackgroundClip: 'text',
+                      backgroundClip: 'text',
+                      color: 'transparent',
+                      textShadow: '0 0 10px #069',
+                      backgroundSize: '200% auto',
+                      animation: 'neonShift 6s linear infinite, neonGlow 2.4s ease-in-out infinite alternate',
+                      letterSpacing: 1.2,
+                    }}>{String(titleDraft || 'Marble Race')}</span>
+                    <span style={{ color: '#555' }}>—</span>
+                    <span style={{
+                      border: '3px solid #fc6',
+                      padding: '2px 8px',
+                      color: '#fc6',
+                      fontWeight: 900,
+                      background: 'rgba(40,30,0,0.35)',
+                      boxShadow: '0 0 12px #630',
+                    }}>{currentStageName}</span>
+                  </div>
+                  <style>{`
+                    @keyframes neonShift { to { background-position: 200% center } }
+                    @keyframes neonGlow { 0% { text-shadow: 0 0 6px #069 } 100% { text-shadow: 0 0 16px #0bf } }
+                  `}</style>
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <div style={{ color: '#9df' }}>Flow:</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -283,6 +335,9 @@ export default function Admin() {
                   <Button onClick={() => sendAdmin('setAutoAdvance', { auto: !(state?.autoAdvance) })}>
                     Auto-advance: {state?.autoAdvance ? 'ON' : 'OFF'}
                   </Button>
+                  <Button onClick={() => sendAdmin('setEnforceUniqueColors', { enforce: !(state?.enforceUniqueColors) })}>
+                    Enforce unique colors: {state?.enforceUniqueColors ? 'ON' : 'OFF'}
+                  </Button>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <Button onClick={() => sendAdmin('start')} disabled={!canLoadStage && !canStartCountdown}>
@@ -295,6 +350,7 @@ export default function Admin() {
                 </div>
                 <PrepSettings state={state} sendAdmin={sendAdmin} />
                 <AutoAdvanceSettings state={state} sendAdmin={sendAdmin} />
+                <CeremonySettings state={state} sendAdmin={sendAdmin} />
                 <div style={{ display: 'grid', gap: 6 }}>
                   <Badge>Lobby: {state?.lobbyOpen ? 'Open' : 'Closed'}</Badge>
                   <Badge>Global: {state?.globalPhase}</Badge>
@@ -383,6 +439,34 @@ function AutoAdvanceSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: 
         style={{ width: 120, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
       />
       <Button onClick={() => sendAdmin('setAutoAdvanceDelay', { seconds })}>Set Auto-Advance Delay</Button>
+    </div>
+  );
+}
+
+function CeremonySettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
+  const [seconds, setSeconds] = React.useState<number>(() => {
+    const ms = Number(state?.ceremonyDwellMs ?? 10000);
+    return Math.max(0.3, Math.min(60, Math.round(ms/100)/10));
+  });
+  React.useEffect(() => {
+    const ms = Number(state?.ceremonyDwellMs ?? 10000);
+    setSeconds(Math.max(0.3, Math.min(60, Math.round(ms/100)/10)));
+  }, [state?.ceremonyDwellMs]);
+  const active = !!state?.ceremonyActive;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <Badge>Award Ceremony: {active ? 'Running' : 'Idle'}</Badge>
+      <label style={{ fontSize: 12, color: '#9df' }}>Per-player dwell (s)</label>
+      <input
+        type="number"
+        min={0.3}
+        step={0.1}
+        value={seconds}
+        onChange={(e) => setSeconds(Math.max(0.3, Math.min(60, Number(e.target.value) || 0.3)))}
+        style={{ width: 120, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
+      />
+      <Button onClick={() => sendAdmin('startCeremony', { seconds })}>{active ? 'Restart Ceremony' : 'Start Ceremony'}</Button>
+      <Button onClick={() => sendAdmin('stopCeremony')} disabled={!active}>Stop</Button>
     </div>
   );
 }

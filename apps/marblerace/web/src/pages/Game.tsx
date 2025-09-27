@@ -15,6 +15,7 @@ export default function Game() {
     restitution: defaultMarbleConfig.restitution,
     color: { r: defaultMarbleConfig.color.r, g: defaultMarbleConfig.color.g, b: defaultMarbleConfig.color.b },
   });
+  const [colorDenied, setColorDenied] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flashSaved, setFlashSaved] = useState(false);
   const lastSentRef = useRef<{ radius: number; density: number; friction: number; restitution: number; color: { r: number; g: number; b: number } } | null>(null);
@@ -33,6 +34,11 @@ export default function Game() {
       setRoom(r);
       setState(r.state);
       r.onStateChange((newState: any) => setState({ ...newState }));
+      r.onMessage('color.denied', (msg: any) => {
+        const who = msg?.conflictWith?.name || 'someone';
+        setColorDenied(`Color too similar to ${who}. Pick a different color.`);
+        setTimeout(() => setColorDenied(null), 2500);
+      });
     });
   }, []);
 
@@ -54,6 +60,10 @@ export default function Game() {
 
   function join() {
     if (!room) return;
+    if ((state as any)?.enforceUniqueColors && hasColorConflict) {
+      setColorDenied('Color too similar. Pick one of the suggestions.');
+      return;
+    }
     localStorage.setItem('mr_name', name);
     room.send('join', { name, playerKey: playerKeyRef.current, color: { r: config.color.r|0, g: config.color.g|0, b: config.color.b|0 } });
   }
@@ -173,6 +183,61 @@ export default function Game() {
   // No auto-join on lobby open; require explicit user action
 
   const colorHex = `#${(config.color.r|0).toString(16).padStart(2,'0')}${(config.color.g|0).toString(16).padStart(2,'0')}${(config.color.b|0).toString(16).padStart(2,'0')}`;
+
+  // Gather other players' colors
+  const otherColors = useMemo(() => {
+    const meId = playerKeyRef.current;
+    const arr: Array<{ r:number; g:number; b:number }> = [];
+    try {
+      const players: any = (state as any)?.players;
+      if (players && typeof players.forEach === 'function') {
+        players.forEach((p: any) => { if (p && p.id !== meId) arr.push({ r: p.config?.color?.r|0, g: p.config?.color?.g|0, b: p.config?.color?.b|0 }); });
+      } else {
+        Object.values((state as any)?.players || {}).forEach((p: any) => { if (p && p.id !== meId) arr.push({ r: p.config?.color?.r|0, g: p.config?.color?.g|0, b: p.config?.color?.b|0 }); });
+      }
+    } catch {}
+    return arr;
+  }, [state?.players, config.color.r, config.color.g, config.color.b]);
+
+  // Perceptual color distance (OKLab)
+  const srgbToLinear = (c: number) => (c/255) <= 0.04045 ? (c/255)/12.92 : Math.pow(((c/255)+0.055)/1.055, 2.4);
+  const rgbToOKLab = (r8: number, g8: number, b8: number) => {
+    const r = srgbToLinear(r8), g = srgbToLinear(g8), b = srgbToLinear(b8);
+    const l = 0.4122214708*r + 0.5363325363*g + 0.0514459929*b;
+    const m = 0.2119034982*r + 0.6806995451*g + 0.1073969566*b;
+    const s = 0.0883024619*r + 0.2817188376*g + 0.6299787005*b;
+    const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+    return { L: 0.2104542553*l_ + 0.7936177850*m_ - 0.0040720468*s_, A: 1.9779984951*l_ - 2.4285922050*m_ + 0.4505937099*s_, B: 0.0259040371*l_ + 0.7827717662*m_ - 0.8086757660*s_ };
+  };
+  const okLabDistance = (c1: any, c2: any) => {
+    const a = rgbToOKLab(c1.r, c1.g, c1.b);
+    const b = rgbToOKLab(c2.r, c2.g, c2.b);
+    return Math.hypot(a.L-b.L, a.A-b.A, a.B-b.B);
+  };
+  const hasColorConflict = useMemo(() => {
+    const mine = config.color;
+    for (const oc of otherColors) {
+      if (okLabDistance(mine, oc) < 0.12) return true;
+    }
+    return false;
+  }, [otherColors, config.color.r, config.color.g, config.color.b]);
+
+  const generateSuggestions = useMemo(() => (n = 5) => {
+    const res: Array<{ r:number; g:number; b:number }> = [];
+    let attempts = 0;
+    while (res.length < n && attempts < 200) {
+      attempts++;
+      const r = Math.floor(40 + Math.random()*215);
+      const g = Math.floor(40 + Math.random()*215);
+      const b = Math.floor(40 + Math.random()*215);
+      const cand = { r, g, b };
+      let ok = otherColors.every((oc) => okLabDistance(cand, oc) >= 0.12);
+      if (ok) ok = res.every((oc) => okLabDistance(cand, oc) >= 0.12);
+      if (ok) res.push(cand);
+    }
+    return res;
+  }, [otherColors]),
+  suggestions = useMemo(() => generateSuggestions(5), [generateSuggestions]);
 
   const waiting = !state || ((state.stages?.length || 0) === 0);
   const inLobby = state?.globalPhase === 'lobby';
@@ -339,7 +404,34 @@ export default function Game() {
         @media(max-width: 900px){.ux-grid{grid-template-columns:1fr}.ux-preview{width:96px;height:96px;border-width:4px}}
       `}</style>
       <header className="mr-header">
-        <h2 style={{ margin: 0 }}>Marble Race</h2>
+        {/* Caption: Title — Current Stage */}
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <span style={{
+            fontWeight: 1000,
+            fontSize: 28,
+            background: 'linear-gradient(90deg,#9cf,#fff,#9cf)',
+            WebkitBackgroundClip: 'text',
+            backgroundClip: 'text',
+            color: 'transparent',
+            textShadow: '0 0 12px #069',
+            backgroundSize: '200% auto',
+            animation: 'neonShift 6s linear infinite, neonGlow 2.4s ease-in-out infinite alternate',
+            letterSpacing: 1.2,
+          }}>{String(state?.title || 'Marble Race')}</span>
+          <span style={{ color: '#555' }}>—</span>
+          <span style={{
+            border: '3px solid #fc6',
+            padding: '2px 8px',
+            color: '#fc6',
+            fontWeight: 900,
+            background: 'rgba(40,30,0,0.35)',
+            boxShadow: '0 0 12px #630',
+          }}>{currentStageName}</span>
+        </div>
+        <style>{`
+          @keyframes neonShift { to { background-position: 200% center } }
+          @keyframes neonGlow { 0% { text-shadow: 0 0 8px #069 } 100% { text-shadow: 0 0 18px #0bf } }
+        `}</style>
         {me && (
           <div className="mr-greeting">
             <span>Welcome, <strong>{me.name}</strong></span>
@@ -466,14 +558,30 @@ export default function Game() {
                       }
                     }));
                   }}
+                  style={{ border: ((state as any)?.enforceUniqueColors && hasColorConflict) ? '3px solid #f66' : '3px solid #333' }}
                 />
                 <span title="Your marble" style={{ width: 18, height: 18, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: colorHex }} />
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <Button onClick={join}>Join</Button>
+                <Button onClick={join} disabled={!!(state as any)?.enforceUniqueColors && hasColorConflict}>Join</Button>
                 {!inLobby && inRunning && <span style={{ color: '#9df' }}>You’ll join the next stage.</span>}
                 {!inLobby && inCountdown && <span style={{ color: '#9df' }}>Spawn is still open—be quick!</span>}
+                {!!(state as any)?.enforceUniqueColors && hasColorConflict && (
+                  <span style={{ color: '#f66' }}>Pick a distinct color to join</span>
+                )}
               </div>
+              {(hasColorConflict || colorDenied) && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {suggestions.map((c, i) => {
+                    const hx = `#${(c.r|0).toString(16).padStart(2,'0')}${(c.g|0).toString(16).padStart(2,'0')}${(c.b|0).toString(16).padStart(2,'0')}`;
+                    return (
+                      <button key={i} className="ux-swatch" style={{ background: hx }} onClick={() => {
+                        setConfig((prev:any) => ({ ...prev, color: { r: c.r, g: c.g, b: c.b } }));
+                      }} title={hx} />
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ) : (
             <div>Lobby is closed. Please wait for the admin to open it.</div>
@@ -503,7 +611,7 @@ export default function Game() {
                           }));
                           setHasInteracted(true);
                         }}
-                        style={{ width: 48, height: 32, border: '3px solid #333', background: '#14161b' }}
+                        style={{ width: 48, height: 32, border: ((state as any)?.enforceUniqueColors && hasColorConflict) ? '3px solid #f66' : '3px solid #333', background: '#14161b' }}
                       />
                       <div className="ux-swatches">
                         {['#ff4d4d','#ffb84d','#ffe84d','#66ff66','#66ccff','#cc99ff','#ffffff'].map((hex) => (
@@ -515,11 +623,31 @@ export default function Game() {
                         ))}
                       </div>
                       <Button onClick={() => {
-                        const rand = () => Math.floor(Math.random()*256);
-                        setConfig((c: any) => ({ ...c, color: { r: rand(), g: rand(), b: rand() } }));
+                        const s = suggestions[0];
+                        if (s) setConfig((c: any) => ({ ...c, color: s }));
+                        else {
+                          const rand = () => Math.floor(Math.random()*256);
+                          setConfig((c: any) => ({ ...c, color: { r: rand(), g: rand(), b: rand() } }));
+                        }
                         setHasInteracted(true);
-                      }}>Random</Button>
+                      }}>Suggest Unique</Button>
                     </div>
+                    {(hasColorConflict || colorDenied) && (
+                      <div style={{ marginTop: 8, color: (state as any)?.enforceUniqueColors ? '#f66' : '#fc6', fontWeight: 700 }}>
+                        {colorDenied || ((state as any)?.enforceUniqueColors ? 'Color too similar — pick a distinct one.' : 'Color is similar — consider changing.')}
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                          {suggestions.map((c, i) => {
+                            const hx = `#${(c.r|0).toString(16).padStart(2,'0')}${(c.g|0).toString(16).padStart(2,'0')}${(c.b|0).toString(16).padStart(2,'0')}`;
+                            return (
+                              <button key={i} className="ux-swatch" style={{ background: hx }} onClick={() => {
+                                setConfig((prev:any) => ({ ...prev, color: { r: c.r, g: c.g, b: c.b } }));
+                                setHasInteracted(true);
+                              }} title={hx} />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                     <div className="ux-help">Color is always adjustable before your marble spawns.</div>
                   </div>
                 </div>
@@ -574,8 +702,9 @@ export default function Game() {
                         setAlloc({ density: 0, friction: 0, restitution: 0, radius: 0 });
                         setHasInteracted(false);
                       }}>Reset</Button>
-                      <Button onClick={() => room?.send('spawn')} disabled={me?.spawned}>Spawn</Button>
+                      <Button onClick={() => room?.send('spawn')} disabled={me?.spawned || ((state as any)?.enforceUniqueColors && hasColorConflict)}>Spawn</Button>
                       {me?.spawned && <span style={{ color: '#9df' }}>Spawned ✓</span>}
+                      {(!(me?.spawned) && (state as any)?.enforceUniqueColors && hasColorConflict) && <span style={{ color: '#f66' }}>Pick a distinct color to spawn</span>}
                     </div>
                   </div>
                 </div>

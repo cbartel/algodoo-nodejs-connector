@@ -27,15 +27,25 @@ const OUTPUT_PATH = process.env.OUTPUT || './output.txt';
 const OUTPUT_POS_PATH = process.env.OUTPUT_POS || './output.pos';
 const INPUT_LOG_PATH = process.env.INPUT_LOG || '';
 const POLL_MS = Number(process.env.POLL_MS || 250);
+const RESET_ESCALATE_START = Number(process.env.RESET_ESCALATE_START || 1_000_000);
+const RESET_ESCALATE_INTERVAL_MS = Number(process.env.RESET_ESCALATE_INTERVAL_MS || 1000);
+const RESET_ESCALATE_MAX = Number(process.env.RESET_ESCALATE_MAX || 1_000_000_000);
 
 let inflight: EnqueueMsg[] = [];
 let lastAck = -1;
 let isResetting = false;
 let resetSeq: number | null = null;
+let resetMinSeqSent: number | null = null;
+let resetEscalateNext = RESET_ESCALATE_START;
+let resetEscalateTimer: NodeJS.Timeout | null = null;
 const pending: EnqueueMsg[] = [];
 let lastOutputSeq = -1;
 let ackPolling = false;
 let outPolling = false;
+let hbTimer: NodeJS.Timeout | null = null;
+let ackTimer: NodeJS.Timeout | null = null;
+let outTimer: NodeJS.Timeout | null = null;
+let scenesTimer: NodeJS.Timeout | null = null;
 
 async function writeAtomic(filePath: string, data: string): Promise<void> {
   const dir = path.dirname(filePath);
@@ -117,11 +127,16 @@ async function pollAck(ws: WebSocket): Promise<void> {
     const last = lines[lines.length - 1];
     const ack = last ? Number(last) : -1;
     if (ack > lastAck) {
-      // Log each acked sequence number for transparency
-      for (let s = lastAck + 1; s <= ack; s++) console.log('[client] ack:', s);
+      const delta = ack - lastAck;
+      // Verbose per-ack logging only in debug mode; otherwise compact summary
+      if (LOG_LEVEL === 'debug' && delta <= 50) {
+        for (let s = lastAck + 1; s <= ack; s++) console.log('[client] ack:', s);
+      } else {
+        console.log('[client] ack-progress:', { to: ack, delta });
+      }
       lastAck = ack;
       // If we were resetting and the reset has been acknowledged, finish reset.
-      if (isResetting && resetSeq != null && ack >= resetSeq) {
+      if (isResetting && resetMinSeqSent != null && ack >= resetMinSeqSent) {
         console.log('[client] RESET acknowledged. Completing reset and switching to normal operation.', { resetSeq });
         // Fresh ack.txt: truncate the file so we start clean
         try {
@@ -143,6 +158,9 @@ async function pollAck(ws: WebSocket): Promise<void> {
         isResetting = false;
         const completedResetSeq = resetSeq;
         resetSeq = null;
+        resetMinSeqSent = null;
+        resetEscalateNext = RESET_ESCALATE_START;
+        if (resetEscalateTimer) { clearInterval(resetEscalateTimer); resetEscalateTimer = null; }
         lastAck = -1;
         inflight = [];
         pending.splice(0, pending.length);
@@ -171,19 +189,26 @@ function connect() {
   ws.on('open', () => {
     debug('[client] connected to server:', SERVER_URL);
     backoff = 500;
+    // Clear any previous timers from a prior connection
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+    if (ackTimer) { clearInterval(ackTimer); ackTimer = null; }
+    if (outTimer) { clearInterval(outTimer); outTimer = null; }
+    if (scenesTimer) { clearInterval(scenesTimer); scenesTimer = null; }
     // announce presence
     const hello: ClientHello = { type: 'client.hello', payload: { version: '0.1.0' } };
     ws.send(JSON.stringify(hello));
     // start heartbeat
-    setInterval(() => {
+    hbTimer = setInterval(() => {
       const alive: ClientAlive = { type: 'client.alive', payload: { ts: Date.now() } };
       ws.send(JSON.stringify(alive));
     }, 3000);
     // Initial scenes publish and periodic refresh to avoid drift
     scanAndPublishScenes(ws).catch(() => {});
-    setInterval(() => scanAndPublishScenes(ws).catch(() => {}), 30000);
+    scenesTimer = setInterval(() => scanAndPublishScenes(ws).catch(() => {}), 30000);
     // Initiate RESET handshake: write a new input.txt containing ONLY "<lastAck+1> RESET"
     resetSeq = (lastAck ?? -1) + 1;
+    resetMinSeqSent = resetSeq;
+    resetEscalateNext = RESET_ESCALATE_START;
     isResetting = true;
     // Proactively clear output so stale lines don't leak through during reset
     (async () => {
@@ -203,8 +228,28 @@ function connect() {
     // Do NOT clear output.txt at reset start; keep lastOutputSeq so events aren't lost
     writeInput().catch(() => {});
     pollAck(ws);
-    setInterval(() => pollAck(ws), POLL_MS);
-    setInterval(() => pollOutput(ws), POLL_MS);
+    ackTimer = setInterval(() => pollAck(ws), POLL_MS);
+    outTimer = setInterval(() => pollOutput(ws), POLL_MS);
+    // Start exponential RESET escalation if not acknowledged
+    if (resetEscalateTimer) { clearInterval(resetEscalateTimer); }
+    resetEscalateTimer = setInterval(() => {
+      if (!isResetting) return;
+      if (resetMinSeqSent == null) return;
+      // If already acknowledged, do nothing (pollAck will flip isResetting)
+      if (lastAck >= resetMinSeqSent) return;
+      // Escalate the RESET seq: 1e6, 2e6, 4e6, ...
+      const next = Math.min(resetEscalateNext, RESET_ESCALATE_MAX);
+      if (resetSeq !== next) {
+        resetSeq = next;
+        // Keep min as the smallest attempt so ack of any earlier attempt completes reset
+        resetMinSeqSent = Math.min(resetMinSeqSent, resetSeq);
+        inflight = [ { seq: resetSeq, line: `${resetSeq} RESET` } ];
+        console.log('[client] reset-escalate:', { resetSeq });
+        writeInput().catch(() => {});
+      }
+      // Prepare next exponential step
+      resetEscalateNext = Math.min(next * 2, RESET_ESCALATE_MAX);
+    }, RESET_ESCALATE_INTERVAL_MS);
   });
 
   ws.on('message', async (data: RawData) => {
@@ -213,6 +258,8 @@ function connect() {
       if (!isResetting) {
         // Start reset handshake initiated by server
         resetSeq = (lastAck ?? -1) + 1;
+        resetMinSeqSent = resetSeq;
+        resetEscalateNext = RESET_ESCALATE_START;
         isResetting = true;
         // Preserve any in-flight commands by buffering them before we keep input.txt with only RESET
         while (inflight.length) pending.push(inflight.shift()!);
@@ -227,6 +274,22 @@ function connect() {
         } catch (e) {
           console.log('[client] reset-start (server) failed preparing files:', String(e));
         }
+        // Start/reset escalation timer for server-initiated reset
+        if (resetEscalateTimer) { clearInterval(resetEscalateTimer); }
+        resetEscalateTimer = setInterval(() => {
+          if (!isResetting) return;
+          if (resetMinSeqSent == null) return;
+          if (lastAck >= resetMinSeqSent) return;
+          const next = Math.min(resetEscalateNext, RESET_ESCALATE_MAX);
+          if (resetSeq !== next) {
+            resetSeq = next;
+            resetMinSeqSent = Math.min(resetMinSeqSent, resetSeq);
+            inflight = [ { seq: resetSeq, line: `${resetSeq} RESET` } ];
+            console.log('[client] reset-escalate:', { resetSeq });
+            writeInput().catch(() => {});
+          }
+          resetEscalateNext = Math.min(next * 2, RESET_ESCALATE_MAX);
+        }, RESET_ESCALATE_INTERVAL_MS);
       }
       return;
     }
@@ -251,6 +314,11 @@ function connect() {
 
   ws.on('close', () => {
     debug('[client] connection closed; will retry in ms:', backoff);
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+    if (ackTimer) { clearInterval(ackTimer); ackTimer = null; }
+    if (outTimer) { clearInterval(outTimer); outTimer = null; }
+    if (scenesTimer) { clearInterval(scenesTimer); scenesTimer = null; }
+    if (resetEscalateTimer) { clearInterval(resetEscalateTimer); resetEscalateTimer = null; }
     setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 10000);
   });

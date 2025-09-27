@@ -46,6 +46,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
     // Initial state
     const state = new RaceStateSchema();
     state.protocolVersion = protocolVersion;
+    state.title = 'Marble Race';
     state.globalPhase = 'lobby';
     state.stageIndex = -1;
     state.stagePhase = 'loading';
@@ -56,6 +57,10 @@ export class RaceRoom extends Room<RaceStateSchema> {
     state.autoAdvance = true;
     state.lobbyOpen = false;
     state.roomId = this.roomId;
+    // Ceremony defaults
+    state.ceremonyActive = false;
+    state.ceremonyDwellMs = 10000;
+    state.ceremonyVersion = 0;
     this.setState(state);
     // Seed scenes from cache if available (client might have published before this room existed)
     try {
@@ -99,6 +104,17 @@ export class RaceRoom extends Room<RaceStateSchema> {
       const id = requestedKey || client.sessionId;
       const name = (payload?.name || 'Player').slice(0, 24);
       debug('join', id, name);
+      // If enforcing unique colors and an incoming color exists, deny too-similar joins
+      try {
+        const cTry: any = (payload as any)?.color;
+        if (this.state.enforceUniqueColors && cTry && Number.isFinite(cTry.r) && Number.isFinite(cTry.g) && Number.isFinite(cTry.b)) {
+          if (this.isColorTooSimilar(cTry, id)) {
+            try { client.send('color.denied', { reason: 'too-similar', conflictWith: this.findClosestColorOwner(cTry, id) }); } catch {}
+            debug('join denied: color too similar');
+            return;
+          }
+        }
+      } catch {}
       if (!this.state.players.has(id)) {
         const ps = new PlayerSchema();
         ps.id = id;
@@ -120,9 +136,14 @@ export class RaceRoom extends Room<RaceStateSchema> {
         ps.name = name;
         const c = (payload as any)?.color;
         if (c && Number.isFinite(c.r) && Number.isFinite(c.g) && Number.isFinite(c.b)) {
-          ps.config.color.r = Math.max(0, Math.min(255, c.r|0));
-          ps.config.color.g = Math.max(0, Math.min(255, c.g|0));
-          ps.config.color.b = Math.max(0, Math.min(255, c.b|0));
+          // If enforcing unique colors and incoming color is too similar, ignore update and notify
+          if (this.state.enforceUniqueColors && this.isColorTooSimilar(c, id)) {
+            try { client.send('color.denied', { reason: 'too-similar', conflictWith: this.findClosestColorOwner(c, id) }); } catch {}
+          } else {
+            ps.config.color.r = Math.max(0, Math.min(255, c.r|0));
+            ps.config.color.g = Math.max(0, Math.min(255, c.g|0));
+            ps.config.color.b = Math.max(0, Math.min(255, c.b|0));
+          }
         }
       }
       cd.playerId = id;
@@ -145,7 +166,13 @@ export class RaceRoom extends Room<RaceStateSchema> {
       const incoming = payload?.partial ?? {};
       const apply: any = {};
       // Allow color pre-spawn in lobby/prep/countdown
-      if (incoming.color && (gp === 'lobby' || sp === 'prep' || sp === 'countdown')) apply.color = incoming.color;
+      if (incoming.color && (gp === 'lobby' || sp === 'prep' || sp === 'countdown')) {
+        if (this.state.enforceUniqueColors && this.isColorTooSimilar(incoming.color, id)) {
+          try { client.send('color.denied', { reason: 'too-similar', conflictWith: this.findClosestColorOwner(incoming.color, id) }); } catch {}
+        } else {
+          apply.color = incoming.color;
+        }
+      }
       // Allow stats only during PREP in intermission
       if (sp === 'prep' && gp === 'intermission') {
         if (typeof incoming.radius === 'number') apply.radius = incoming.radius;
@@ -215,6 +242,20 @@ export class RaceRoom extends Room<RaceStateSchema> {
         case 'finish':
           this.finishRace();
           break;
+        case 'startCeremony': {
+          const dwellMsRaw = (data?.ms != null) ? Number(data.ms) : ((data?.seconds != null) ? Math.round(Number(data.seconds) * 1000) : this.state.ceremonyDwellMs);
+          const dwell = Math.max(300, Math.min(60 * 1000, dwellMsRaw | 0));
+          this.state.ceremonyDwellMs = dwell;
+          this.state.ceremonyActive = true;
+          this.state.ceremonyVersion = (this.state.ceremonyVersion | 0) + 1;
+          this.pushTicker('ceremony', `Award ceremony started (dwell ${Math.round(dwell/100)/10}s)`);
+          break;
+        }
+        case 'stopCeremony': {
+          this.state.ceremonyActive = false;
+          this.pushTicker('ceremony', 'Award ceremony stopped');
+          break;
+        }
         case 'nextStage':
           this.advanceStage();
           break;
@@ -241,6 +282,18 @@ export class RaceRoom extends Room<RaceStateSchema> {
           this.state.perPostStageDelayMs = ms | 0;
           this.pushTicker('stage', `Auto-advance delay set: ${Math.ceil(this.state.perPostStageDelayMs/1000)}s`);
           if (this.state.stagePhase === 'stage_finished' && this.state.autoAdvance) this.startPostStageTimer();
+          break;
+        }
+        case 'setEnforceUniqueColors': {
+          (this.state as any).enforceUniqueColors = !!data?.enforce;
+          this.pushTicker('colors', `Unique colors enforcement: ${this.state.enforceUniqueColors ? 'ON' : 'OFF'}`);
+          break;
+        }
+        case 'setTitle': {
+          const raw = String((data?.title ?? '')).slice(0, 80);
+          const next = raw.trim() || 'Marble Race';
+          this.state.title = next;
+          this.pushTicker('title', `Title set: ${next}`);
           break;
         }
         case 'removePlayer': {
@@ -327,6 +380,50 @@ export class RaceRoom extends Room<RaceStateSchema> {
 
   private getClientData(client: Client): ClientData {
     return (client as any)._cd || ((client as any)._cd = {});
+  }
+
+  // Color similarity enforcement helpers (OKLab distance)
+  private srgbToLinear(c: number): number {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }
+  private rgbToOKLab(r8: number, g8: number, b8: number): { L: number; A: number; B: number } {
+    const r = this.srgbToLinear(r8), g = this.srgbToLinear(g8), b = this.srgbToLinear(b8);
+    const l = 0.4122214708*r + 0.5363325363*g + 0.0514459929*b;
+    const m = 0.2119034982*r + 0.6806995451*g + 0.1073969566*b;
+    const s = 0.0883024619*r + 0.2817188376*g + 0.6299787005*b;
+    const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+    const L = 0.2104542553*l_ + 0.7936177850*m_ - 0.0040720468*s_;
+    const A = 1.9779984951*l_ - 2.4285922050*m_ + 0.4505937099*s_;
+    const B = 0.0259040371*l_ + 0.7827717662*m_ - 0.8086757660*s_;
+    return { L, A, B };
+  }
+  private okLabDistance(c1: { r: number; g: number; b: number }, c2: { r: number; g: number; b: number }): number {
+    const a = this.rgbToOKLab(c1.r, c1.g, c1.b);
+    const b = this.rgbToOKLab(c2.r, c2.g, c2.b);
+    const dL = a.L - b.L, dA = a.A - b.A, dB = a.B - b.B;
+    return Math.sqrt(dL*dL + dA*dA + dB*dB);
+  }
+  private isColorTooSimilar(color: { r: number; g: number; b: number }, excludePlayerId?: string, min = 0.12): boolean {
+    let tooClose = false;
+    this.state.players.forEach((p) => {
+      if (excludePlayerId && p.id === excludePlayerId) return;
+      const other = { r: p.config.color.r, g: p.config.color.g, b: p.config.color.b };
+      const d = this.okLabDistance(color, other);
+      if (d < min) tooClose = true;
+    });
+    return tooClose;
+  }
+  private findClosestColorOwner(color: { r: number; g: number; b: number }, excludePlayerId?: string): { id: string; name: string } | null {
+    let best: { id: string; name: string } | null = null;
+    let bestD = Number.POSITIVE_INFINITY;
+    this.state.players.forEach((p) => {
+      if (excludePlayerId && p.id === excludePlayerId) return;
+      const other = { r: p.config.color.r, g: p.config.color.g, b: p.config.color.b };
+      const d = this.okLabDistance(color, other);
+      if (d < bestD) { bestD = d; best = { id: p.id, name: p.name }; }
+    });
+    return best;
   }
 
   private createRace(data: { stages: StageConfig[]; pointsTable?: number[] }) {
@@ -747,5 +844,5 @@ export function dispatchAlgodooEvent(ev: AlgodooEvent) {
   }
 }
 
-// Provide a plain snapshot of ticker events for HTTP consumers
-// getTickerSnapshot was removed; dashboard consumes ticker directly via Colyseus observers.
+  // Provide a plain snapshot of ticker events for HTTP consumers
+  // getTickerSnapshot was removed; dashboard consumes ticker directly via Colyseus observers.

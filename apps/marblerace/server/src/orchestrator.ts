@@ -52,7 +52,7 @@ export class Orchestrator {
 
     const radius = player.config.radius.toFixed(7);
     const thyme = `
-    spawnMarble = () => {
+    spawnMarble = (i) => {
         marble = scene.addCircle({
             restitution := ${restitution};
             killer := true;
@@ -82,10 +82,11 @@ export class Orchestrator {
             zDepth := 106.00000;
             layer := 0
         });
+        eval(\"scene.temp.${player.id}\" + i + \" = marble\");
     };
     scene.my.marblecount > 1 ? {
         for(scene.my.marblecount, (i) => {
-            spawnMarble();
+            spawnMarble(i);
         });
     } : { 
         spawnMarble(); 
