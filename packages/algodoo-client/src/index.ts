@@ -1,5 +1,11 @@
+/**
+ * algodoo-client: bridges a simple file-based queue (input.txt/ack.txt/output.txt)
+ * with a WebSocket transport. Handles RESET handshakes, state restoration, and
+ * scene discovery, enabling Algodoo to process enqueued Thyme commands.
+ */
 import {RawData, WebSocket} from 'ws';
 import fs from 'fs/promises';
+import type { Dirent } from 'fs';
 import path from 'path';
 
 interface EnqueueMsg {
@@ -383,13 +389,14 @@ async function pollOutput(ws: WebSocket): Promise<void> {
   outPolling = false;
 }
 
+/** Recursively find .phn/.phz files under SCENES_DIR and publish list over WS. */
 async function scanAndPublishScenes(ws: WebSocket): Promise<void> {
   const root = process.env.SCENES_DIR || './scenes';
   const files: string[] = [];
   async function walk(dir: string, rel = ''): Promise<void> {
-    let entries: any[] = [];
+    let entries: Dirent[] = [];
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true }) as any;
+      entries = await fs.readdir(dir, { withFileTypes: true }) as unknown as Dirent[];
     } catch {
       return;
     }
@@ -397,7 +404,7 @@ async function scanAndPublishScenes(ws: WebSocket): Promise<void> {
       const name = ent.name as string;
       const full = dir + '/' + name;
       const relPath = rel ? rel + '/' + name : name;
-      if ((ent as any).isDirectory?.()) {
+      if (ent.isDirectory?.()) {
         await walk(full, relPath);
       } else if (name.endsWith('.phn') || name.endsWith('.phz')) {
         files.push(relPath);

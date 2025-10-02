@@ -1,5 +1,7 @@
 import { startServer, ServerPlugin } from './server.js';
+/** Entry CLI to start the server with one or more plugins. */
 
+/** Dynamically import plugin modules by path. */
 async function loadPlugins(paths: string[]): Promise<ServerPlugin[]> {
   const plugins: ServerPlugin[] = [];
   for (const p of paths) {
@@ -10,6 +12,7 @@ async function loadPlugins(paths: string[]): Promise<ServerPlugin[]> {
   return plugins;
 }
 
+/** Main entrypoint: resolves plugins from argv and starts the server. */
 async function main(): Promise<void> {
   const pluginPaths = process.argv.slice(2);
   const plugins = await loadPlugins(pluginPaths);

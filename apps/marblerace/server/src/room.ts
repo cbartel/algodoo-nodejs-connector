@@ -8,10 +8,11 @@ import {
   defaultPointsTable,
   comparePlayers,
   AlgodooEvent,
+  type MarbleConfig,
 } from 'marblerace-protocol';
 import { Orchestrator } from './orchestrator.js';
 import { requestClientScanScenes } from './transport.js';
-import { getLastScenes } from './scenesCache.js';
+import { getLastScenes } from './scenes-cache.js';
 import { RaceStateSchema, PlayerSchema, StageSchema, ResultSchema, PointsTierSchema } from './schema.js';
 
 type ClientData = {
@@ -23,6 +24,15 @@ const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:room]', ...args);
 const debug = (...args: unknown[]) => { if (LOG_LEVEL === 'debug') console.log('[mr:room]', ...args); };
 
+/**
+ * Colyseus room coordinating Marble Race game state and lifecycle.
+ *
+ * Responsibilities:
+ * - Maintain authoritative race state (phases, players, points, ticker).
+ * - Gate client actions (join, setConfig, spawn) based on current phases.
+ * - Orchestrate stage transitions via the Algodoo runtime adapter.
+ * - Handle incoming Algodoo events (stage.ready, marble.finish, etc.).
+ */
 export class RaceRoom extends Room<RaceStateSchema> {
   maxClients = 50;
   static rooms = new Set<RaceRoom>();
@@ -162,9 +172,9 @@ export class RaceRoom extends Room<RaceStateSchema> {
         friction: p.config.friction,
         restitution: p.config.restitution,
         color: { r: p.config.color.r, g: p.config.color.g, b: p.config.color.b },
-      };
+      } as { radius: number; density: number; friction: number; restitution: number; color: { r: number; g: number; b: number } };
       const incoming = payload?.partial ?? {};
-      const apply: any = {};
+      const apply: Partial<{ radius: number; density: number; friction: number; restitution: number; color: { r: number; g: number; b: number } }> = {};
       // Allow color pre-spawn in lobby/prep/countdown
       if (incoming.color && (gp === 'lobby' || sp === 'prep' || sp === 'countdown')) {
         if (this.state.enforceUniqueColors && this.isColorTooSimilar(incoming.color, id)) {
@@ -180,7 +190,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
         if (typeof incoming.friction === 'number') apply.friction = incoming.friction;
         if (typeof incoming.restitution === 'number') apply.restitution = incoming.restitution;
       }
-      const clamped = clampConfig(apply, src as any);
+      const clamped = clampConfig(apply, src as unknown as MarbleConfig);
       p.config.radius = clamped.radius;
       p.config.density = clamped.density;
       p.config.friction = clamped.friction;

@@ -24,6 +24,15 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.19.13)
 
+  apps/example-app:
+    dependencies:
+      algodoo-cmd-dispatcher:
+        specifier: workspace:*
+        version: link:../../packages/algodoo-cmd-dispatcher
+      algodoo-server:
+        specifier: workspace:*
+        version: link:../../packages/algodoo-server
+
   apps/marblerace/app:
     dependencies:
       algodoo-server:
@@ -60,9 +69,6 @@ importers:
       '@colyseus/ws-transport':
         specifier: ^0.16.3
         version: 0.16.5(@colyseus/core@0.16.21(@colyseus/schema@3.0.60)(@pm2/io@6.1.0))
-      algodoo-cmd-dispatcher:
-        specifier: workspace:*
-        version: link:../../../packages/algodoo-cmd-dispatcher
       algodoo-server:
         specifier: workspace:*
         version: link:../../../packages/algodoo-server
@@ -191,15 +197,6 @@ importers:
       '@types/ws':
         specifier: ^8.17.0
         version: 8.18.1
-
-  packages/example-app:
-    dependencies:
-      algodoo-cmd-dispatcher:
-        specifier: workspace:*
-        version: link:../algodoo-cmd-dispatcher
-      algodoo-server:
-        specifier: workspace:*
-        version: link:../algodoo-server
 
 packages:
 

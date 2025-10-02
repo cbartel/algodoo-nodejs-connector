@@ -1,3 +1,4 @@
+/** Minimal example app: hosts the cmd-dispatcher UI on the default server. */
 import { startServer } from 'algodoo-server';
 import cmdDispatcherPlugin from 'algodoo-cmd-dispatcher';
 
@@ -7,3 +8,4 @@ const port = process.env.PORT ? Number(process.env.PORT) : undefined;
 startServer({ port, plugins: [cmdDispatcherPlugin] });
 
 console.log('Example server started. UI at http://localhost:' + (port ?? 8080) + '/cmd/');
+

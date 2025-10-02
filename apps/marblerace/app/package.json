@@ -7,7 +7,7 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --external algodoo-server marblerace-server",
+    "build": "tsup src/index.ts --format esm --external algodoo-server marblerace-server",
     "start": "pnpm -w -r build && node dist/index.js"
   },
   "dependencies": {

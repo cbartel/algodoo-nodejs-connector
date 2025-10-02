@@ -1,5 +1,4 @@
-export { marbleRacePlugin as default } from './plugin.js';
-export * from './plugin.js';
-export * from './room.js';
-export * from './orchestrator.js';
-
+export { marbleRacePlugin as default } from './plugin';
+export * from './plugin';
+export * from './room';
+export * from './orchestrator';

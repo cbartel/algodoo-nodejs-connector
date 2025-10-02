@@ -141,9 +141,10 @@ export default function Game() {
       let used = Math.abs(next.density) + Math.abs(next.friction) + Math.abs(next.restitution) + Math.abs(next.radius);
       if (used > TOTAL_POINTS) {
         // Reduce other stats towards zero until within budget
-        const order: Array<keyof typeof next> = ['radius', 'density', 'friction', 'restitution']
-          .filter((k) => k !== key)
-          .sort((a, b) => Math.abs(next[b]) - Math.abs(next[a]));
+        const orderInit = ['radius', 'density', 'friction', 'restitution'] as const;
+        const order: (keyof typeof next)[] = [];
+        for (const k of orderInit) { if (k !== key) order.push(k); }
+        order.sort((a, b) => Math.abs(next[b]) - Math.abs(next[a]));
         let idx = 0;
         while (used > TOTAL_POINTS && (Math.abs(next[order[0]]) > 0 || Math.abs(next[order[1]]) > 0 || Math.abs(next[order[2]]) > 0)) {
           const k = order[idx % order.length];

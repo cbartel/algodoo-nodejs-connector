@@ -1,3 +1,4 @@
+/** Callbacks invoked by the runtime to signal transport events. */
 export type RuntimeCallbacks = {
   onAccepted?: (seq: number) => void;
   onAcked?: (seq: number) => void;
@@ -11,6 +12,10 @@ type ErrorMessage = { type: 'error'; payload: { message: string } };
 type StatusMessage = { type: 'status'; payload: Record<string, unknown> };
 type ServerMessage = AcceptedMessage | AckedMessage | ErrorMessage | StatusMessage;
 
+/**
+ * Thin client for connecting to an algodoo-server and submitting Thyme.
+ * Maintains a heartbeat and provides promise-based submit semantics.
+ */
 export class Runtime {
   private url: string;
   private ws: WebSocket | null = null;
@@ -63,6 +68,7 @@ export class Runtime {
     if (this.heartbeat) clearInterval(this.heartbeat);
   }
 
+  /** Submit a Thyme script and resolve with the accepted sequence id. */
   submitEval(thyme: string): Promise<{ seq: number }> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {

@@ -1,11 +1,19 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
+/**
+ * Minimal pluggable WebSocket + HTTP server used by Algodoo integrations.
+ * Provides a queueing transport for Thyme `EVAL` commands and a plugin hook
+ * surface for handling HTTP and WS messages.
+ */
 
 export interface ClientMessage<T = unknown> {
   type: string;
   payload?: T;
 }
 
+/**
+ * Methods exposed to plugins to interact with the transport and clients.
+ */
 export interface PluginContext {
   server: http.Server;
   wss: WebSocketServer;
@@ -27,6 +35,7 @@ export interface PluginContext {
   getStatus(): { hasClient: boolean; inflight: number; lastAck: number; nextSeq: number; clientCount: number };
 }
 
+/** Server plugin interface for HTTP routes and WS handling. */
 export interface ServerPlugin {
   name: string;
   /**
@@ -47,6 +56,7 @@ export interface ServerPlugin {
   onClose?(ws: WebSocket, ctx: PluginContext): void;
 }
 
+/** Options for starting the server. */
 export interface StartServerOptions {
   port?: number;
   plugins?: ServerPlugin[];
@@ -193,6 +203,10 @@ export function startServer({ port = DEFAULT_PORT, plugins = [] }: StartServerOp
   });
   const WS_PATH = process.env.ALGODOO_WS_PATH || '/_ws';
   const wss =  new WebSocketServer({ server, path: WS_PATH });
+  // Ensure `wss.address()` returns the underlying HTTP server address so
+  // tests and operators can discover the ephemeral port when port=0.
+  const origAddress = (wss as any).address?.bind(wss);
+  (wss as any).address = () => server.address() ?? (origAddress ? origAddress() : null);
   const host = process.env.HOST || '0.0.0.0';
   server.listen(port, host, () => console.log(`[server] listening on ${host}:${port}`));
   const clients = new Set<WebSocket>();

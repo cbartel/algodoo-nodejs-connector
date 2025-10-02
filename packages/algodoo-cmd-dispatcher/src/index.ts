@@ -2,6 +2,12 @@ import { WebSocket } from 'ws';
 import { createReadStream, existsSync } from 'fs';
 import { dirname, join, extname } from 'path';
 import { fileURLToPath } from 'url';
+/**
+ * algodoo-cmd-dispatcher: a simple ServerPlugin providing a small UI to submit
+ * Thyme `EVAL` commands and observe outputs. It brokers between a UI WS client
+ * and a single algodoo-client via the shared transport provided by
+ * `algodoo-server`.
+ */
 import type {
   ServerPlugin,
   PluginContext,
@@ -9,15 +15,18 @@ import type {
 } from 'algodoo-server';
 import type { IncomingMessage, ServerResponse } from 'http';
 
+/** Message payload for submitting a Thyme command. */
 export interface SubmitPayload {
   cmd: 'EVAL';
   params: string;
 }
 
+/** Message payload sent by algodoo-client indicating last acknowledged seq. */
 export interface DrainPayload {
   lastAck: number;
 }
 
+/** Monotonic sequence counter used for queueing. */
 export class SeqCounter {
   private n = 0;
   next(): number {
@@ -28,6 +37,7 @@ export class SeqCounter {
   }
 }
 
+/** Escape newlines/carriage-returns within a single-line command. */
 export function serializeParams(p: string): string {
   return p.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
 }
@@ -93,6 +103,7 @@ export const seqCounter = new SeqCounter();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const uiDir = join(__dirname, 'ui');
 
+/** Server plugin providing the dispatcher UI and WS handling. */
 export const cmdDispatcherPlugin: ServerPlugin = {
   name: 'cmd-dispatcher',
   path: 'cmd',

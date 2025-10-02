@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/index.cjs",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/plugin.cjs",
+  "module": "dist/plugin.js",
+  "types": "dist/plugin.d.ts",
   "scripts": {
-    "build": "tsup src/index.ts src/plugin.ts src/room.ts src/orchestrator.ts --format esm,cjs --dts --clean --external algodoo-server",
-    "clean": "rimraf dist"
+    "build": "tsup --tsconfig ./tsconfig.json src/plugin.ts src/room.ts src/orchestrator.ts src/transport.ts src/http-utils.ts src/output-event-mapper.ts src/scenes-cache.ts src/schema.ts --format esm,cjs --clean --external algodoo-server",
+    "clean": "rimraf dist",
+    "test": "vitest run"
   },
   "dependencies": {
     "colyseus": "^0.16.4",

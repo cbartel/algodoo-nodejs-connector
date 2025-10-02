@@ -5,7 +5,8 @@
     "rootDir": "src",
     "outDir": "dist",
     "experimentalDecorators": true,
-    "useDefineForClassFields": false
+    "useDefineForClassFields": false,
+    "composite": true
   },
   "references": [
     { "path": "../protocol" }

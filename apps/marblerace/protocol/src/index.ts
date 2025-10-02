@@ -1,19 +1,26 @@
-// Protocol definitions for Marble Race
+/**
+ * Protocol definitions and shared contracts for Marble Race.
+ * These types and helpers are consumed by server and web clients.
+ */
 
+/** Current wire protocol version. */
 export const protocolVersion = '0.1.0';
 
-// Minimal handshake
+/**
+ * Minimal client handshake payload exchanged on connection.
+ */
 export type Handshake = {
   protocolVersion: string;
   roomId?: string;
   playerKey?: string; // stable client identity for reconnection
 };
 
-// Race and Stage phases
+/** Global race phase values. */
 export type RacePhase = 'lobby' | 'countdown' | 'running' | 'finished';
+/** Per-stage phase values. */
 export type StagePhase = 'loading' | 'prep' | 'countdown' | 'running' | 'stage_finished';
 
-// Clamp ranges for marble parameters (authoritative on server)
+/** Clamp ranges for marble parameters (server remains authoritative). */
 export const clampRanges = {
   // Adjusted to support smaller marbles (meters)
   radius: { min: 0.02, max: 0.045 },
@@ -22,16 +29,20 @@ export const clampRanges = {
   restitution: { min: 0.0, max: 1.0 },
 };
 
+/** Simple 0..255 RGB color. */
 export type RGB = { r: number; g: number; b: number };
 
+/** Clamp a number into [0,1]. */
 export function clamp01(n: number) {
   return Math.max(0, Math.min(1, n));
 }
 
+/** Clamp a number into [min,max]. */
 export function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+/** Validate RGB channels are finite and within 0..255. */
 export function isValidRGB(c: RGB): boolean {
   return [c.r, c.g, c.b].every((v) => Number.isFinite(v) && v >= 0 && v <= 255);
 }
@@ -46,6 +57,10 @@ export type MarbleConfig = {
 
 export type PartialMarbleConfig = Partial<MarbleConfig>;
 
+/**
+ * Merge a partial config onto a base config and clamp to legal ranges.
+ * Color falls back to base when invalid.
+ */
 export function clampConfig(input: PartialMarbleConfig, base: MarbleConfig): MarbleConfig {
   const r = clampRanges;
   return {
@@ -57,6 +72,7 @@ export function clampConfig(input: PartialMarbleConfig, base: MarbleConfig): Mar
   };
 }
 
+/** Default marble configuration (midpoints/neutral). */
 export const defaultMarbleConfig: MarbleConfig = {
   // default to midpoint of clamp ranges
   radius: (clampRanges.radius.min + clampRanges.radius.max) / 2, // 0.0325 with current ranges
@@ -66,8 +82,8 @@ export const defaultMarbleConfig: MarbleConfig = {
   color: { r: 255, g: 255, b: 255 },
 };
 
-// Points table: index 0 -> 1st place points
-export type PointsTable = number[]; // legacy per-placement points table
+/** Legacy per-placement points table: index 0 -> first-place points. */
+export type PointsTable = number[];
 export const defaultPointsTable: PointsTable = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
 // New tiered points configuration: apply in order; e.g.
@@ -76,6 +92,9 @@ export const defaultPointsTable: PointsTable = [25, 18, 15, 12, 10, 8, 6, 4, 2, 
 export type PointsTier = { count: number; points: number };
 export type PointsConfig = PointsTier[];
 
+/**
+ * Stage configuration referenced in race setup.
+ */
 export type StageConfig = {
   id: string; // maps to Algodoo scene identifier
   name?: string;
@@ -86,6 +105,7 @@ export type StageConfig = {
 
 export type PlayerId = string;
 
+/** Player snapshot tracked server-side and exposed to clients. */
 export type Player = {
   id: PlayerId;
   name: string;
@@ -105,6 +125,7 @@ export type StageResult = {
   finishedAt?: number; // ms timestamp for auditing
 };
 
+/** Overall race state managed by Colyseus room and consumed by clients. */
 export type RaceState = {
   protocolVersion: string;
   globalPhase: RacePhase;
@@ -124,12 +145,14 @@ export type RaceState = {
 };
 
 // Client/player messages
+/** Messages allowed from client/player. */
 export type ClientMsg =
   | { type: 'handshake'; payload: Handshake }
   | { type: 'join'; payload: { name: string; color?: RGB } }
   | { type: 'setConfig'; payload: { partial: PartialMarbleConfig } };
 
 // Admin actions (must be authorized by server)
+/** Admin messages gated by MARBLERACE_ADMIN_TOKEN. */
 export type AdminMsg =
   | { type: 'admin/createRace'; payload: { stages: StageConfig[]; seed?: string; perStageTimeoutMs: number; pointsTable?: PointsTable } }
   | { type: 'admin/openLobby' }
@@ -147,6 +170,7 @@ export type AnyIncoming = ClientMsg | AdminMsg;
 
 // Algodoo orchestration contracts
 // Commands the server intends to send to Algodoo runtime
+/** Outgoing commands to Algodoo runtime. */
 export type AlgodooCommand =
   | { type: 'loadStage'; payload: { stageId: string } }
   | { type: 'spawnMarbles'; payload: { players: Array<{ id: PlayerId; name: string; config: MarbleConfig }> } }
@@ -155,6 +179,7 @@ export type AlgodooCommand =
   | { type: 'resetStage' };
 
 // Events the server expects to receive from Algodoo
+/** Incoming events from Algodoo runtime. */
 export type AlgodooEvent =
   | { type: 'stage.ready'; payload: { stageId: string } }
   | { type: 'marble.finish'; payload: { playerId: PlayerId; order: number; ts: number } }
@@ -162,12 +187,14 @@ export type AlgodooEvent =
   | { type: 'stage.reset'; payload: { stageId: string } };
 
 // Simple formatter for ticker lines (clients may format their own if needed)
+/** Simple formatter for ticker lines (clients may render their own). */
 export function formatTicker(kind: string, msg: string, ts = Date.now()): string {
   const time = new Date(ts).toLocaleTimeString();
   return `[${time}] ${kind}${msg ? `: ${msg}` : ''}`;
 }
 
 // Deterministic ranking comparator
+/** Deterministic ranking comparator used for standings. */
 export function comparePlayers(a: Player, b: Player): number {
   if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
   const aBest = a.bestPlacement ?? Number.POSITIVE_INFINITY;
@@ -180,6 +207,7 @@ export function comparePlayers(a: Player, b: Player): number {
   return a.name.localeCompare(b.name);
 }
 
+/** Construct an empty race state with sane defaults. */
 export function emptyRaceState(): RaceState {
   return {
     protocolVersion,
@@ -196,10 +224,12 @@ export function emptyRaceState(): RaceState {
   };
 }
 
+/** Convenience helper to count stages. */
 export function stageCount(state: RaceState): number {
   return state.stages.length;
 }
 
+/** Push a formatted ticker entry and prune to max entries. */
 export function pushTicker(state: RaceState, kind: string, msg: string, max = 10) {
   state.ticker.unshift(formatTicker(kind, msg));
   state.ticker = state.ticker.slice(0, max);

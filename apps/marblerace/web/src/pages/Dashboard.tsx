@@ -239,8 +239,92 @@ export default function Dashboard() {
   const roomId = s?.roomId;
   const link = `${publicBase || window.location.origin}/game`;
   const displayEvents = eventsObs;
+  const compactEvents = useMemo(() => displayEvents.slice(0, 4), [displayEvents]);
   const [goFlash, setGoFlash] = useState(false);
   const [lastCdMs, setLastCdMs] = useState<number>(0);
+  // Resizable split between Standings (left) and Preview (right)
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const [leftWidth, setLeftWidth] = useState<number>(() => {
+    const n = Number(localStorage.getItem('mr_dash_left_width') || 640);
+    return Number.isFinite(n) && n > 300 ? n : 640;
+  });
+  const [resizing, setResizing] = useState(false);
+  const [mainHeight, setMainHeight] = useState<number>(480);
+  useEffect(() => { localStorage.setItem('mr_dash_left_width', String(leftWidth)); }, [leftWidth]);
+  useEffect(() => {
+    if (!resizing) return;
+    const onMove = (e: MouseEvent) => {
+      const row = splitRef.current; if (!row) return;
+      const rect = row.getBoundingClientRect();
+      const minLeft = 360; // min width for standings
+      const minRight = 320; // min width for preview
+      const total = rect.width;
+      let next = e.clientX - rect.left; // width for left column
+      if (next < minLeft) next = minLeft;
+      if (next > total - minRight) next = total - minRight;
+      setLeftWidth(Math.round(next));
+    };
+    const onUp = () => setResizing(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [resizing]);
+  // Compute available height for the bottom split to fill viewport without page scroll
+  useEffect(() => {
+    const compute = () => {
+      const row = splitRef.current;
+      const top = row ? row.getBoundingClientRect().top : 0;
+      const h = Math.max(240, Math.floor(window.innerHeight - top - 16));
+      setMainHeight(h);
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    return () => window.removeEventListener('resize', compute);
+  }, []);
+  // Local window/application capture preview (Phase 1)
+  const [captureStream, setCaptureStream] = useState<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v && captureStream) {
+      try {
+        v.srcObject = captureStream;
+        v.muted = true;
+        // best-effort to auto-start
+        Promise.resolve(v.play()).catch(() => {});
+      } catch {}
+    }
+    if (v && !captureStream) {
+      try { (v as any).srcObject = null; } catch {}
+    }
+  }, [captureStream]);
+  const startCapture = async () => {
+    try {
+      // Browser will prompt to select a screen/window/tab. We do not request audio.
+      const stream = await (navigator.mediaDevices as any).getDisplayMedia?.({ video: true, audio: false });
+      if (stream) {
+        setCaptureStream(stream);
+        // Clean up when the user stops sharing from the browser UI
+        try {
+          const [track] = stream.getVideoTracks();
+          if (track) track.addEventListener('ended', () => {
+            setCaptureStream(null);
+            const v2 = videoRef.current; if (v2) v2.srcObject = null;
+          });
+        } catch {}
+      }
+    } catch (e) {
+      console.warn('capture cancelled', e);
+    }
+  };
+  const stopCapture = () => {
+    try { captureStream?.getTracks().forEach((t) => t.stop()); } catch {}
+    setCaptureStream(null);
+    const v = videoRef.current; if (v) v.srcObject = null;
+  };
   useEffect(() => {
     const ms = Number(s?.countdownMsRemaining || 0);
     // detect transition from counting (>0) to go (<=0)
@@ -716,7 +800,22 @@ export default function Dashboard() {
         <Badge>Stage: {s?.stagePhase}</Badge>
         <Badge>Stage {typeof s?.stageIndex === 'number' ? s.stageIndex + 1 : '-'} / {s?.stages?.length || 0}</Badge>
         <Countdown msRemaining={s?.countdownMsRemaining} />
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* Compact events to the left of QR, fixed height to avoid layout shifts */}
+          <div style={{
+            border: '3px solid #333', background: '#0b0f15', width: 420, height: 128, padding: 6,
+            color: '#9aa', fontSize: 12, lineHeight: 1.2, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'center'
+          }}>
+            {compactEvents.length === 0 ? (
+              <div style={{ opacity: 0.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>No recent events</div>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 14 }}>
+                {compactEvents.map((line, i) => (
+                  <li key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line}</li>
+                ))}
+              </ul>
+            )}
+          </div>
           <QR url={link} />
         </div>
       </div>
@@ -759,34 +858,75 @@ export default function Dashboard() {
           <div>Waiting for race… Admin has not created a race yet.</div>
         </Panel>
       )}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 12 }}>
-        <Panel title="Standings">
-          <div ref={standingsRef}>
-          <Table
-            headers={["#", "Player", ...Array.from({ length: s?.stages?.length || 0 }).map((_, i) => `S${i+1}`), "Total"]}
-            rows={standings.map((p: any, i: number) => [
-              i+1,
-              <span
-                key={`${p.id||p.name}-name`}
-                ref={(el) => { if (el) nameRefs.current[String(p.id||p.name)] = el; }}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      <div ref={splitRef} style={{ display: 'flex', gap: 12, marginTop: 12, alignItems: 'stretch', height: mainHeight, overflow: 'hidden' }}>
+        <div style={{ flex: '0 0 auto', width: leftWidth, minWidth: 360, height: '100%', overflow: 'auto' }}>
+          <Panel title="Standings">
+            <div ref={standingsRef}>
+              <Table
+                headers={["#", "Player", ...Array.from({ length: s?.stages?.length || 0 }).map((_, i) => `S${i+1}`), "Total"]}
+                rows={standings.map((p: any, i: number) => [
+                  i+1,
+                  <span
+                    key={`${p.id||p.name}-name`}
+                    ref={(el) => { if (el) nameRefs.current[String(p.id||p.name)] = el; }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <span title="player color" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: p.colorHex }} />
+                    <span>{p.name}</span>
+                  </span>,
+                  ...(p.perStage || []),
+                  p.total
+                ])}
+              />
+            </div>
+          </Panel>
+        </div>
+        {/* Resizer */}
+        <div
+          onMouseDown={() => setResizing(true)}
+          style={{ width: 8, cursor: 'col-resize', background: '#222', border: '3px solid #333', borderTop: 0, borderBottom: 0 }}
+          title="Drag to resize"
+          role="separator"
+          aria-orientation="vertical"
+        />
+        <div style={{ flex: 1, minWidth: 320, height: '100%', overflow: 'hidden' }}>
+          {captureStream ? (
+            <div
+              style={{
+                position: 'relative',
+                background: 'black',
+                height: '100%',
+                overflow: 'hidden',
+              }}
+            >
+              <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              <button onClick={stopCapture} aria-label="Stop" title="Stop" style={{
+                position: 'absolute', top: 6, right: 6, background: '#200', color: '#f66', border: '3px solid #f66', cursor: 'pointer', fontWeight: 900
+              }}>×</button>
+            </div>
+          ) : (
+            <Panel title="Live Preview">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ color: '#9aa', fontSize: 12 }}>Capture your Algodoo window locally</div>
+                <div>
+                  <button onClick={startCapture} style={{ background: '#122', color: '#9df', border: '3px solid #6cf', padding: '4px 8px', cursor: 'pointer', fontWeight: 700 }}>Share Window</button>
+                </div>
+              </div>
+              <div
+                style={{
+                  position: 'relative',
+                  background: '#0b0f15',
+                  height: '100%',
+                  overflow: 'hidden',
+                }}
               >
-                <span title="player color" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: p.colorHex }} />
-                <span>{p.name}</span>
-              </span>,
-              ...(p.perStage || []),
-              p.total
-            ])}
-          />
-          </div>
-        </Panel>
-        <Panel title="Events">
-          <ul>
-            {displayEvents.map((line, i) => (
-              <li key={i}>{line}</li>
-            ))}
-          </ul>
-        </Panel>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#567' }}>
+                  Click “Share Window” to preview Algodoo locally
+                </div>
+              </div>
+            </Panel>
+          )}
+        </div>
       </div>
     </div>
   );

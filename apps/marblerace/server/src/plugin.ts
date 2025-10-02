@@ -1,14 +1,15 @@
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import type { IncomingMessage, ServerResponse } from 'http';
 import http from 'http';
 import type { ServerPlugin, PluginContext, ClientMessage } from 'algodoo-server';
 import { Server as ColyseusServer } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
-import { RaceRoom, updateClientAlive, updateScenes, dispatchAlgodooEvent } from './room.js';
-import { wireTransport, submitPingAsync, requestClientScanScenes } from './transport.js';
-import { setLastScenes } from './scenesCache.js';
+import { RaceRoom, updateClientAlive, updateScenes, dispatchAlgodooEvent } from './room';
+import { wireTransport, submitPingAsync, requestClientScanScenes } from './transport';
+import { setLastScenes } from './scenes-cache';
+import { contentTypeFor, safeJoin, extractHostname, isLocalhost, pickLocalIPv4 } from './http-utils';
+import { mapOutputToEvent } from './output-event-mapper';
 
 const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:plugin]', ...args);
@@ -64,59 +65,14 @@ function sendFile(res: ServerResponse, file: string, ctype?: string, cacheSecond
   fs.createReadStream(file).pipe(res);
 }
 
-function contentTypeFor(file: string): string | undefined {
-  if (file.endsWith('.html')) return 'text/html; charset=utf-8';
-  if (file.endsWith('.js')) return 'application/javascript; charset=utf-8';
-  if (file.endsWith('.css')) return 'text/css; charset=utf-8';
-  if (file.endsWith('.svg')) return 'image/svg+xml';
-  if (file.endsWith('.png')) return 'image/png';
-  if (file.endsWith('.jpg') || file.endsWith('.jpeg')) return 'image/jpeg';
-  if (file.endsWith('.json')) return 'application/json; charset=utf-8';
-  return undefined;
-}
+// (helper functions moved to http-utils.ts and output-event-mapper.ts)
 
-// Resolve a URL path under a base directory, preventing path traversal.
-function safeJoin(baseDir: string, urlPath: string): string | null {
-  const cleaned = urlPath.replace(/^\/+/, '');
-  const resolved = path.resolve(baseDir, cleaned);
-  const base = path.resolve(baseDir);
-  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
-    return null;
-  }
-  return resolved;
-}
-
-// Map raw algodoo-client output (cmd, params[]) to a canonical AlgodooEvent
-function mapOutputToEvent(cmd: string, params: any): import('marblerace-protocol').AlgodooEvent | null {
-  const lower = cmd.toLowerCase();
-  const arr = Array.isArray(params) ? params : [];
-  // Generic aliases
-  if (lower === 'ready') return { type: 'stage.ready', payload: { stageId: String(arr[0] ?? '') } };
-  if (lower === 'finish') return { type: 'marble.finish', payload: { playerId: String(arr[0] ?? ''), order: Number(arr[1] ?? 0) || 0, ts: Number(arr[2] ?? Date.now()) } };
-  if (lower === 'timeout') return { type: 'stage.timeout', payload: { stageId: String(arr[0] ?? ''), ts: Number(arr[1] ?? Date.now()) } };
-  if (lower === 'reset') return { type: 'stage.reset', payload: { stageId: String(arr[0] ?? '') } };
-  if (lower === 'stage.ready' || lower === 'stage_ready' || lower === 'ev_stage_ready') {
-    const stageId = String(arr[0] ?? '');
-    return { type: 'stage.ready', payload: { stageId } };
-  }
-  if (lower === 'marble.finish' || lower === 'marble_finish' || lower === 'ev_marble_finish') {
-    const playerId = String(arr[0] ?? '');
-    const order = Number(arr[1] ?? 0) || 0;
-    const ts = Number(arr[2] ?? Date.now());
-    return { type: 'marble.finish', payload: { playerId, order, ts } };
-  }
-  if (lower === 'stage.timeout' || lower === 'stage_timeout' || lower === 'ev_stage_timeout') {
-    const stageId = String(arr[0] ?? '');
-    const ts = Number(arr[1] ?? Date.now());
-    return { type: 'stage.timeout', payload: { stageId, ts } };
-  }
-  if (lower === 'stage.reset' || lower === 'stage_reset' || lower === 'ev_stage_reset') {
-    const stageId = String(arr[0] ?? '');
-    return { type: 'stage.reset', payload: { stageId } };
-  }
-  return null;
-}
-
+/**
+ * Marble Race server plugin.
+ * - Serves the SPA at /admin, /game, /dashboard
+ * - Exposes health and config endpoints under /mr
+ * - Bridges Algodoo transport and Colyseus room
+ */
 export const marbleRacePlugin: ServerPlugin = {
   name: 'marblerace',
   // Handle all three UI paths directly
@@ -244,11 +200,16 @@ export const marbleRacePlugin: ServerPlugin = {
       if (url.startsWith('/mr/config') || url === '/mr/config') {
         const xfProto = ((req.headers['x-forwarded-proto'] as string) || '').toLowerCase();
         const scheme = xfProto.includes('https') ? 'https' : 'http';
-        const headerHost = (req.headers.host as string) || 'localhost:8080';
+        const xfHostRaw = (req.headers['x-forwarded-host'] as string) || '';
+        const headerHost = xfHostRaw || (req.headers.host as string) || 'localhost:8080';
         const requestedHost = headerHost.split(',')[0].trim();
         const envPublicHost = process.env.MARBLERACE_PUBLIC_HOST;
+        // Prefer an IPv4 address when host is localhost, so QR codes are scannable
         const ipHost = pickLocalIPv4();
-        const baseHost = envPublicHost || (isLocalhost(requestedHost) ? (ipHost || requestedHost) : requestedHost);
+        // Some environments may not expose interfaces; try socket localAddress as a last resort
+        const socketAddr = (req.socket?.localAddress || '').replace(/^::ffff:/, '');
+        const socketHost = socketAddr && !isLocalhost(socketAddr) ? socketAddr : null;
+        const baseHost = envPublicHost || (isLocalhost(requestedHost) ? (ipHost || socketHost || requestedHost) : requestedHost);
         const hostOnly = extractHostname(baseHost);
         const httpPort = Number(process.env.PORT || 8080);
         const httpUrl = `${scheme}://${hostOnly}:${httpPort}`;
@@ -265,43 +226,7 @@ export const marbleRacePlugin: ServerPlugin = {
       if (fs.existsSync(indexPath)) {
         debug('serve index.html');
         return sendFile(res, indexPath, 'text/html; charset=utf-8');
-}
-
-function isLocalhost(host: string): boolean {
-  const h = host.split(':')[0].toLowerCase();
-  return h === 'localhost' || h === '127.0.0.1' || h === '::1';
-}
-
-function pickLocalIPv4(): string | null {
-  try {
-    const ifaces = os.networkInterfaces();
-    const all: string[] = [];
-    for (const name of Object.keys(ifaces)) {
-      for (const i of ifaces[name] || []) {
-        if (i.family === 'IPv4' && !i.internal) all.push(i.address);
       }
-    }
-    // Prefer RFC1918 private ranges
-    const prefer = all.find((ip) => ip.startsWith('192.168.') || ip.startsWith('10.') || ip.match(/^172\.(1[6-9]|2\d|3[0-1])\./));
-    return prefer || all[0] || null;
-  } catch {
-    return null;
-  }
-}
-
-function extractHostname(hostHeaderOrHost: string): string {
-  const src = hostHeaderOrHost.trim();
-  if (!src) return 'localhost';
-  if (src.startsWith('[')) {
-    // [IPv6]:port or [IPv6]
-    const end = src.indexOf(']');
-    if (end > 0) return src.slice(1, end);
-    return src.replace(/^\[|\]$/g, '');
-  }
-  // IPv4-or-hostname[:port]
-  const parts = src.split(':');
-  return parts[0];
-}
       debug('index missing', indexPath);
       res.statusCode = 500; res.end('web app not built'); return;
     }
