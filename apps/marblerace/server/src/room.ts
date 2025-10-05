@@ -3,12 +3,14 @@ import {
   protocolVersion,
   StageConfig,
   defaultMarbleConfig,
-  clampConfig,
+  clamp,
+  clamp01,
   StagePhase,
   defaultPointsTable,
   comparePlayers,
   AlgodooEvent,
   type MarbleConfig,
+  clampRanges,
 } from 'marblerace-protocol';
 import { Orchestrator } from './orchestrator.js';
 import { requestClientScanScenes } from './transport.js';
@@ -68,6 +70,15 @@ export class RaceRoom extends Room<RaceStateSchema> {
     state.autoAdvance = true;
     state.lobbyOpen = false;
     state.roomId = this.roomId;
+    // Initialize clamp ranges from protocol defaults
+    state.ranges.radius.min = clampRanges.radius.min;
+    state.ranges.radius.max = clampRanges.radius.max;
+    state.ranges.density.min = clampRanges.density.min;
+    state.ranges.density.max = clampRanges.density.max;
+    state.ranges.friction.min = clampRanges.friction.min;
+    state.ranges.friction.max = clampRanges.friction.max;
+    state.ranges.restitution.min = clampRanges.restitution.min;
+    state.ranges.restitution.max = clampRanges.restitution.max;
     // Ceremony defaults
     state.ceremonyActive = false;
     state.ceremonyDwellMs = 10000;
@@ -85,6 +96,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.orchestrator = new Orchestrator({
       onEvent: (ev) => this.handleAlgodooEvent(ev),
     });
+    try { this.orchestrator.setMarbleMultiplier?.(this.state.marbleMultiplier || 1.0); } catch {}
     // Ask client to scan scenes now that a room exists
     try { requestClientScanScenes(); } catch {}
 
@@ -191,14 +203,23 @@ export class RaceRoom extends Room<RaceStateSchema> {
         if (typeof incoming.friction === 'number') apply.friction = incoming.friction;
         if (typeof incoming.restitution === 'number') apply.restitution = incoming.restitution;
       }
-      const clamped = clampConfig(apply, src as unknown as MarbleConfig);
-      p.config.radius = clamped.radius;
-      p.config.density = clamped.density;
-      p.config.friction = clamped.friction;
-      p.config.restitution = clamped.restitution;
-      p.config.color.r = clamped.color.r;
-      p.config.color.g = clamped.color.g;
-      p.config.color.b = clamped.color.b;
+      // Dynamic clamp using current state ranges
+      const r = this.state.ranges;
+      const next: any = { ...src };
+      if (apply.radius != null) next.radius = clamp(apply.radius as number, r.radius.min, r.radius.max);
+      if (apply.density != null) next.density = clamp(apply.density as number, r.density.min, r.density.max);
+      if (apply.friction != null) next.friction = clamp(apply.friction as number, r.friction.min, r.friction.max);
+      if (apply.restitution != null) next.restitution = clamp(apply.restitution as number, r.restitution.min, r.restitution.max);
+      if (apply.color) {
+        next.color = { r: Math.max(0, Math.min(255, apply.color.r|0)), g: Math.max(0, Math.min(255, apply.color.g|0)), b: Math.max(0, Math.min(255, apply.color.b|0)) };
+      }
+      p.config.radius = next.radius;
+      p.config.density = next.density;
+      p.config.friction = next.friction;
+      p.config.restitution = next.restitution;
+      p.config.color.r = next.color.r;
+      p.config.color.g = next.color.g;
+      p.config.color.b = next.color.b;
     });
 
     // Player cheer during RUNNING (after spawn)
@@ -350,6 +371,55 @@ export class RaceRoom extends Room<RaceStateSchema> {
           const next = raw.trim() || 'Marble Race';
           this.state.title = next;
           this.pushTicker('title', `Title set: ${next}`);
+          break;
+        }
+        case 'setMarbleMultiplier': {
+          // Allow only in lobby to keep race deterministic
+          if (this.state.globalPhase !== 'lobby') { debug('setMarbleMultiplier ignored: not in lobby'); break; }
+          const raw = Number((data?.value));
+          let v = Number.isFinite(raw) ? raw : 1.0;
+          v = Math.max(0.5, Math.min(4.0, Math.round(v * 2) / 2)); // 0.5 steps in [0.5,4]
+          this.state.marbleMultiplier = v;
+          try { this.orchestrator.setMarbleMultiplier?.(v); } catch {}
+          this.pushTicker('marbles', `Multiplier set: x${v.toFixed(1)}`);
+          break;
+        }
+        case 'setClampRanges': {
+          // Ranges may only be changed while in lobby (before race starts)
+          if (this.state.globalPhase !== 'lobby') {
+            debug('setClampRanges ignored: not in lobby');
+            break;
+          }
+          const dataAny = (data || {}) as any;
+          const toPair = (v: any, defMin: number, defMax: number, hardMin: number, hardMax: number) => {
+            const min = Number(v?.min);
+            const max = Number(v?.max);
+            let mn = Number.isFinite(min) ? min : defMin;
+            let mx = Number.isFinite(max) ? max : defMax;
+            if (mx < mn) [mn, mx] = [mx, mn];
+            mn = Math.max(hardMin, Math.min(hardMax, mn));
+            mx = Math.max(hardMin, Math.min(hardMax, mx));
+            if (mx < mn) mx = mn;
+            return { min: mn, max: mx };
+          };
+          const curr = this.state.ranges;
+          const radius = ('radius' in dataAny) ? toPair(dataAny.radius, curr.radius.min, curr.radius.max, 0.001, 1.0) : { min: curr.radius.min, max: curr.radius.max };
+          const density = ('density' in dataAny) ? toPair(dataAny.density, curr.density.min, curr.density.max, 0.1, 20.0) : { min: curr.density.min, max: curr.density.max };
+          // Friction/restitution are logically [0,1]
+          const friction = ('friction' in dataAny) ? toPair(dataAny.friction, curr.friction.min, curr.friction.max, 0.0, 1.0) : { min: curr.friction.min, max: curr.friction.max };
+          const restitution = ('restitution' in dataAny) ? toPair(dataAny.restitution, curr.restitution.min, curr.restitution.max, 0.0, 1.0) : { min: curr.restitution.min, max: curr.restitution.max };
+          this.state.ranges.radius.min = radius.min; this.state.ranges.radius.max = radius.max;
+          this.state.ranges.density.min = density.min; this.state.ranges.density.max = density.max;
+          this.state.ranges.friction.min = friction.min; this.state.ranges.friction.max = friction.max;
+          this.state.ranges.restitution.min = restitution.min; this.state.ranges.restitution.max = restitution.max;
+          // Re-clamp existing players to fit new ranges
+          this.state.players.forEach((p) => {
+            p.config.radius = clamp(p.config.radius, radius.min, radius.max);
+            p.config.density = clamp(p.config.density, density.min, density.max);
+            p.config.friction = clamp(p.config.friction, friction.min, friction.max);
+            p.config.restitution = clamp(p.config.restitution, restitution.min, restitution.max);
+          });
+          this.pushTicker('ranges', `Updated ranges: radius [${radius.min.toFixed(3)}, ${radius.max.toFixed(3)}], density [${density.min.toFixed(1)}, ${density.max.toFixed(1)}]`);
           break;
         }
         case 'removePlayer': {
@@ -899,6 +969,3 @@ export function dispatchAlgodooEvent(ev: AlgodooEvent) {
     try { room.ingestEventFromAlgodoo(ev); } catch {}
   }
 }
-
-  // Provide a plain snapshot of ticker events for HTTP consumers
-  // getTickerSnapshot was removed; dashboard consumes ticker directly via Colyseus observers.

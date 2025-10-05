@@ -18,9 +18,14 @@ export type OrchestratorCallbacks = {
 export class Orchestrator {
   private cb: OrchestratorCallbacks;
   private log = (...args: unknown[]) => console.log('[mr:orch]', ...args);
+  private marbleMultiplier = 1.0;
 
   constructor(cb: OrchestratorCallbacks) {
     this.cb = cb;
+  }
+
+  setMarbleMultiplier(v: number) {
+    this.marbleMultiplier = v;
   }
 
   /**
@@ -42,6 +47,7 @@ export class Orchestrator {
 
   async spawnMarble(player: Pick<Player, 'id' | 'name' | 'config'>): Promise<void> {
     this.log('spawnMarble', player.id);
+    const multiplier = this.marbleMultiplier;
     const color = player.config.color;
     const r = (color.r/255).toFixed(7);
     const g = (color.g/255).toFixed(7);
@@ -51,6 +57,7 @@ export class Orchestrator {
     const friction = player.config.friction.toFixed(7);
 
     const radius = player.config.radius.toFixed(7);
+    const marbleMultiplier = Number.isFinite(multiplier) ? multiplier.toFixed(1) : '1.0';
     const thyme = `
     spawnMarble = (i) => {
         marble = scene.addCircle({
@@ -85,7 +92,7 @@ export class Orchestrator {
         eval(\"scene.temp.${player.id}\" + i + \" = marble\");
     };
     scene.my.marblecount > 1 ? {
-        for(scene.my.marblecount, (i) => {
+        for(scene.my.marblecount * ${marbleMultiplier}, (i) => {
             spawnMarble(i);
         });
     } : { 

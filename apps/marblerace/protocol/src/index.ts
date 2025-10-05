@@ -21,12 +21,20 @@ export type RacePhase = 'lobby' | 'countdown' | 'running' | 'finished';
 export type StagePhase = 'loading' | 'prep' | 'countdown' | 'running' | 'stage_finished';
 
 /** Clamp ranges for marble parameters (server remains authoritative). */
-export const clampRanges = {
-  // Adjusted to support smaller marbles (meters)
-  radius: { min: 0.02, max: 0.045 },
+export type ClampRange = { min: number; max: number };
+export type ClampRanges = {
+  radius: ClampRange;
+  density: ClampRange;
+  friction: ClampRange;
+  restitution: ClampRange;
+};
+
+export const clampRanges: ClampRanges = {
+  // Adjusted defaults (meters)
+  radius: { min: 0.02, max: 0.04 },
   density: { min: 0.5, max: 4.0 },
-  friction: { min: 0.0, max: 1.0 },
-  restitution: { min: 0.0, max: 1.0 },
+  friction: { min: 0.0, max: 0.3 },
+  restitution: { min: 0.25, max: 0.5 },
 };
 
 /** Simple 0..255 RGB color. */
@@ -75,10 +83,10 @@ export function clampConfig(input: PartialMarbleConfig, base: MarbleConfig): Mar
 /** Default marble configuration (midpoints/neutral). */
 export const defaultMarbleConfig: MarbleConfig = {
   // default to midpoint of clamp ranges
-  radius: (clampRanges.radius.min + clampRanges.radius.max) / 2, // 0.0325 with current ranges
+  radius: (clampRanges.radius.min + clampRanges.radius.max) / 2, // 0.03 with current ranges
   density: (clampRanges.density.min + clampRanges.density.max) / 2, // 2.25
-  friction: 0.5,
-  restitution: 0.5,
+  friction: (clampRanges.friction.min + clampRanges.friction.max) / 2, // 0.15
+  restitution: (clampRanges.restitution.min + clampRanges.restitution.max) / 2, // 0.375
   color: { r: 255, g: 255, b: 255 },
 };
 
@@ -164,7 +172,9 @@ export type AdminMsg =
   | { type: 'admin/setAutoAdvance'; payload: { auto: boolean } }
   | { type: 'admin/removePlayer'; payload: { playerId: string } }
   | { type: 'admin/setPrepTimeout'; payload: { seconds?: number; ms?: number } }
-  | { type: 'admin/setAutoAdvanceDelay'; payload: { seconds?: number; ms?: number } };
+  | { type: 'admin/setAutoAdvanceDelay'; payload: { seconds?: number; ms?: number } }
+  | { type: 'admin/setMarbleMultiplier'; payload: { value: number } }
+  | { type: 'admin/setClampRanges'; payload: Partial<ClampRanges> };
 
 export type AnyIncoming = ClientMsg | AdminMsg;
 

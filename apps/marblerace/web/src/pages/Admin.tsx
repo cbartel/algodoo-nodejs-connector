@@ -238,6 +238,12 @@ export default function Admin() {
                 </div>
               </div>
               <div style={{ fontSize: 12, color: '#9df', marginTop: 8 }}>Tip: Select scenes, reorder, and rename as needed.</div>
+              <div style={{ marginTop: 10 }}>
+                <RangesSettings state={state} sendAdmin={sendAdmin} />
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <MultiplierSettings state={state} sendAdmin={sendAdmin} />
+              </div>
             </div>
           ) : (
             <div style={{ color: '#fc6' }}>No scenes received from client yet.</div>
@@ -358,6 +364,7 @@ export default function Admin() {
                   <Badge>Stage: {state?.stagePhase}</Badge>
                   <Badge>Current: {currentStageName}</Badge>
                   <Badge>Stage {typeof state?.stageIndex === 'number' ? state.stageIndex + 1 : '-'} / {stageCount}</Badge>
+                  <Badge>Ranges: {String(state?.globalPhase||'') === 'lobby' ? 'Editable' : 'Locked'}</Badge>
                   {!!state?.countdownMsRemaining && <Badge>Countdown: {Math.ceil((state.countdownMsRemaining || 0)/1000)}s</Badge>}
               <div style={{ display:'flex', gap:6, alignItems:'center', border: pingInfo?.ok ? '3px solid #2a2' : '3px solid #a22', padding: 4 }}>
                 <Badge tone={clientAliveAgo != null && clientAliveAgo <= 6 ? 'success' : 'warn'}>
@@ -497,6 +504,112 @@ function MusicSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string
           Current: <a href={embedUrl} target="_blank" rel="noreferrer">{id}</a>
         </div>
       )}
+    </div>
+  );
+}
+
+function MultiplierSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
+  const locked = String(state?.globalPhase || '') !== 'lobby';
+  const [val, setVal] = React.useState<number>(() => {
+    const v = Number(state?.marbleMultiplier ?? 1);
+    return Number.isFinite(v) ? v : 1;
+  });
+  React.useEffect(() => {
+    const v = Number(state?.marbleMultiplier ?? 1);
+    setVal(Number.isFinite(v) ? v : 1);
+  }, [state?.marbleMultiplier]);
+  const options = Array.from({ length: 8 }, (_, i) => 0.5 + i * 0.5); // 0.5..4.0
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <Badge>Marble Multiplier</Badge>
+      <select
+        value={val}
+        disabled={locked}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          setVal(v);
+          if (!locked) sendAdmin('setMarbleMultiplier', { value: v });
+        }}
+        style={{ padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>{`x${o.toFixed(1)}`}</option>
+        ))}
+      </select>
+      <span style={{ color: '#9df', fontSize: 12 }}>(Editable in lobby; auto-applies)</span>
+    </div>
+  );
+}
+
+function RangesSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
+  type Pair = { min: number; max: number };
+  const getPair = (p: any, defMin: number, defMax: number): Pair => ({
+    min: Number.isFinite(Number(p?.min)) ? Number(p.min) : defMin,
+    max: Number.isFinite(Number(p?.max)) ? Number(p.max) : defMax,
+  });
+  const s = (state as any) || {};
+  const rr = s?.ranges || {};
+  const locked = String(s?.globalPhase || '') !== 'lobby';
+  const [radius, setRadius] = React.useState<Pair>(getPair(rr?.radius, 0.02, 0.045));
+  const [density, setDensity] = React.useState<Pair>(getPair(rr?.density, 0.5, 4.0));
+  const [friction, setFriction] = React.useState<Pair>(getPair(rr?.friction, 0.0, 1.0));
+  const [restitution, setRestitution] = React.useState<Pair>(getPair(rr?.restitution, 0.0, 1.0));
+  const decs = {
+    radius: 3,
+    density: 1,
+    friction: 2,
+    restitution: 2,
+  } as const;
+  const round = (v: number, d: number) => {
+    if (!Number.isFinite(v)) return 0;
+    const f = Math.pow(10, d);
+    return Math.round(v * f) / f;
+  };
+  const fmt = (v: number, d: number) => (Number.isFinite(v) ? v.toFixed(d) : '');
+  React.useEffect(() => {
+    const rr2 = (state as any)?.ranges || {};
+    setRadius(getPair(rr2?.radius, 0.02, 0.045));
+    setDensity(getPair(rr2?.density, 0.5, 4.0));
+    setFriction(getPair(rr2?.friction, 0.0, 1.0));
+    setRestitution(getPair(rr2?.restitution, 0.0, 1.0));
+  }, [state?.ranges]);
+  const numberInputStyle = { width: 90, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' } as React.CSSProperties;
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <Badge>Value Ranges {locked ? '(Locked—race started)' : '(Editable in lobby)'}</Badge>
+      {([
+        { key: 'radius', label: 'Diameter (m)', value: radius, set: setRadius, step: 0.001, d: decs.radius },
+        { key: 'density', label: 'Density', value: density, set: setDensity, step: 0.1, d: decs.density },
+        { key: 'friction', label: 'Friction', value: friction, set: setFriction, step: 0.01, d: decs.friction },
+        { key: 'restitution', label: 'Bounciness', value: restitution, set: setRestitution, step: 0.01, d: decs.restitution },
+      ] as const).map(({ key, label, value, set, step }) => (
+        <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ width: 140, color: '#9df' }}>{label}</div>
+          <label style={{ color: '#aaa' }}>Min</label>
+          <input
+            type="number"
+            step={step}
+            value={fmt(value.min, (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution))}
+            disabled={locked}
+            onChange={(e) => set({ min: Number(e.target.value), max: value.max })}
+            onBlur={(e) => set({ min: round(Number(e.target.value), (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution)), max: value.max })}
+            style={numberInputStyle}
+          />
+          <label style={{ color: '#aaa' }}>Max</label>
+          <input
+            type="number"
+            step={step}
+            value={fmt(value.max, (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution))}
+            disabled={locked}
+            onChange={(e) => set({ min: value.min, max: Number(e.target.value) })}
+            onBlur={(e) => set({ min: value.min, max: round(Number(e.target.value), (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution)) })}
+            style={numberInputStyle}
+          />
+        </div>
+      ))}
+      <div>
+        <Button onClick={() => sendAdmin('setClampRanges', { radius, density, friction, restitution })} disabled={locked}>Apply Ranges</Button>
+      </div>
     </div>
   );
 }

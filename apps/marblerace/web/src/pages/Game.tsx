@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { clampRanges, defaultMarbleConfig } from 'marblerace-protocol';
+import { clampRanges as defaultClampRanges, defaultMarbleConfig } from 'marblerace-protocol';
 import { Button, Panel, Badge } from 'marblerace-ui-kit';
 import { connectRoom, getPlayerKey } from '../lib/colyseus';
 
@@ -204,8 +204,11 @@ export default function Game() {
   };
   // Map signed delta in [-MAX..MAX] to numeric value around default, with mild ease
   const mapDelta = (key: 'density' | 'friction' | 'restitution' | 'radius', delta: number): number => {
-    const base = defaultMarbleConfig[key];
-    const r = (clampRanges as any)[key];
+    const ranges = (state as any)?.ranges || defaultClampRanges;
+    const r = (ranges as any)[key];
+    const base = (r && typeof r.min === 'number' && typeof r.max === 'number')
+      ? (r.min + r.max) / 2
+      : (defaultMarbleConfig as any)[key];
     const dir = delta >= 0 ? 1 : -1;
     const t = ease(Math.min(1, Math.abs(delta) / MAX_PER_STAT));
     if (dir >= 0) return base + t * (r.max - base);

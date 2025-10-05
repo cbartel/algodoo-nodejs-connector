@@ -13,11 +13,25 @@ export class RGBSchema extends Schema {
 
 /** Physical and visual config for a single marble. */
 export class ConfigSchema extends Schema {
-  @colyseusType('number') radius = 0.0325; // midpoint of [0.02, 0.045]
-  @colyseusType('number') density = 2.25;  // midpoint of [0.5, 4.0]
-  @colyseusType('number') friction = 0.5;  // midpoint of [0, 1]
-  @colyseusType('number') restitution = 0.5; // midpoint of [0, 1]
+  @colyseusType('number') radius = 0.03;     // midpoint of [0.02, 0.04]
+  @colyseusType('number') density = 2.25;    // midpoint of [0.5, 4.0]
+  @colyseusType('number') friction = 0.15;   // midpoint of [0.0, 0.3]
+  @colyseusType('number') restitution = 0.375; // midpoint of [0.25, 0.5]
   @colyseusType(RGBSchema) color = new RGBSchema();
+}
+
+/** Clamp range for a single numeric parameter. */
+export class ClampRangeSchema extends Schema {
+  @colyseusType('number') min = 0;
+  @colyseusType('number') max = 1;
+}
+
+/** Grouped clamp ranges exposed to clients/admin. */
+export class ClampRangesSchema extends Schema {
+  @colyseusType(ClampRangeSchema) radius = new ClampRangeSchema();
+  @colyseusType(ClampRangeSchema) density = new ClampRangeSchema();
+  @colyseusType(ClampRangeSchema) friction = new ClampRangeSchema();
+  @colyseusType(ClampRangeSchema) restitution = new ClampRangeSchema();
 }
 
 /** Stage descriptor (scene id + optional display name). */
@@ -93,6 +107,9 @@ export class RaceStateSchema extends Schema {
   @colyseusType('int32') postStageMsRemaining = 0;
   @colyseusType('string') roomId = '';
   @colyseusType('boolean') enforceUniqueColors = true;
+  @colyseusType('number') marbleMultiplier = 1.0; // 0.5..4.0 in 0.5 steps
+  // Runtime-adjustable clamp ranges for marble parameters
+  @colyseusType(ClampRangesSchema) ranges = new ClampRangesSchema();
   // Algodoo client integration
   @colyseusType('number') clientLastAliveTs = 0; // 0 => unknown
   @colyseusType(['string']) scenes = new ArraySchema<string>(); // flattened relative paths like "subdir/file.phn"
