@@ -15,7 +15,24 @@ export default function Dashboard() {
   const nameRefs = useRef<Record<string, HTMLElement | null>>({});
   const standingsRef = useRef<HTMLDivElement | null>(null);
   const [rowHighlights, setRowHighlights] = useState<Array<{ id: number; left: number; top: number; width: number; height: number; color: string }>>([]);
+  const [cheerFx, setCheerFx] = useState<Array<{ id: number; icon: string; text: string; color: string; left: number; top: number; playerName: string }>>([]);
+  const seenCheerIdsRef = useRef<Set<number>>(new Set());
   const s: any = room?.state as any;
+
+  // Prevent page scroll; keep dashboard within one viewport
+  useEffect(() => {
+    const prevHtmlH = document.documentElement.style.height;
+    const prevBodyH = document.body.style.height;
+    const prevBodyOv = document.body.style.overflow;
+    document.documentElement.style.height = '100%';
+    document.body.style.height = '100%';
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.documentElement.style.height = prevHtmlH;
+      document.body.style.height = prevBodyH;
+      document.body.style.overflow = prevBodyOv;
+    };
+  }, []);
 
   useEffect(() => {
     connectRoom().then((r) => {
@@ -36,7 +53,22 @@ export default function Dashboard() {
         setVer((v) => v + 1);
       };
       applyFromState();
-      r.onStateChange(applyFromState);
+      r.onStateChange((newState: any) => {
+        applyFromState();
+        // Fallback: scan cheers for any not yet animated
+        try {
+          const cheers: any = (r.state as any)?.cheers;
+          const set = seenCheerIdsRef.current;
+          const n = Number((cheers && cheers.length) || 0);
+          for (let i = Math.max(0, n - 5); i < n; i++) {
+            const it: any = cheers[i];
+            const id = Number(it?.id || 0);
+            if (id && !set.has(id)) { set.add(id); spawnCheer(it); }
+          }
+          // keep set small
+          if (set.size > 200) { seenCheerIdsRef.current = new Set(Array.from(set).slice(-100)); }
+        } catch {}
+      });
       // Also bind ArraySchema signals directly for snappier updates
       try {
         const t: any = (r.state as any)?.ticker;
@@ -44,6 +76,10 @@ export default function Dashboard() {
           t.onAdd = (_it: any, _index: number) => applyFromState();
           t.onRemove = (_it: any, _index: number) => applyFromState();
           t.onChange = (_it: any, _index: number) => applyFromState();
+        }
+        const cheers: any = (r.state as any)?.cheers;
+        if (cheers) {
+          cheers.onAdd = (it: any, _idx: number) => spawnCheer(it);
         }
       } catch {}
     });
@@ -67,13 +103,30 @@ export default function Dashboard() {
         setVer((v) => v + 1);
       };
       applyFromState();
-      r2.onStateChange(applyFromState);
+      r2.onStateChange((newState: any) => {
+        applyFromState();
+        try {
+          const cheers: any = (r2.state as any)?.cheers;
+          const set = seenCheerIdsRef.current;
+          const n = Number((cheers && cheers.length) || 0);
+          for (let i = Math.max(0, n - 5); i < n; i++) {
+            const it: any = cheers[i];
+            const id = Number(it?.id || 0);
+            if (id && !set.has(id)) { set.add(id); spawnCheer(it); }
+          }
+          if (set.size > 200) { seenCheerIdsRef.current = new Set(Array.from(set).slice(-100)); }
+        } catch {}
+      });
       try {
         const t: any = (r2.state as any)?.ticker;
         if (t) {
           t.onAdd = (_it: any, _index: number) => applyFromState();
           t.onRemove = (_it: any, _index: number) => applyFromState();
           t.onChange = (_it: any, _index: number) => applyFromState();
+        }
+        const cheers: any = (r2.state as any)?.cheers;
+        if (cheers) {
+          cheers.onAdd = (it: any, _idx: number) => spawnCheer(it);
         }
       } catch {}
     };
@@ -85,6 +138,31 @@ export default function Dashboard() {
       window.removeEventListener('mr:room.reconnected', onReconnected);
     };
   }, []);
+  // Helpers
+  const rgbToHex = (col: any, fallback = '#6cf') => {
+    try {
+      const r = (col?.r | 0).toString(16).padStart(2, '0');
+      const g = (col?.g | 0).toString(16).padStart(2, '0');
+      const b = (col?.b | 0).toString(16).padStart(2, '0');
+      return `#${r}${g}${b}`;
+    } catch { return fallback; }
+  };
+
+  function spawnCheer(it: any) {
+    try {
+      const rect = standingsRef.current?.getBoundingClientRect();
+      const left = Math.round((rect?.left ?? 80) + (rect?.width ?? 600) * (0.45 + Math.random() * 0.1));
+      const top = Math.round((rect?.bottom ?? (window.innerHeight - 80)) - 6);
+      const col = it?.color ? rgbToHex(it.color) : '#6cf';
+      const id = (it?.id|0) || Math.floor(Math.random()*1e9);
+      const icon = String(it?.icon || '🎉');
+      const text = String(it?.text || 'Cheers!');
+      const playerName = String(it?.playerName || '');
+      seenCheerIdsRef.current.add(id);
+      setCheerFx((prev) => [...prev, { id, icon, text, color: col, left, top, playerName }]);
+      setTimeout(() => setCheerFx((prev) => prev.filter((p) => p.id !== id)), 3600);
+    } catch {}
+  }
   // Detect per-player stage points increases and spawn bursts
   useEffect(() => {
     if (!s) return;
@@ -183,8 +261,7 @@ export default function Dashboard() {
           const r = p?.results?.[i];
           perStage.push(Number(r?.points ?? 0));
         }
-        const col = p?.config?.color || { r: 255, g: 255, b: 255 };
-        const colorHex = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
+        const colorHex = rgbToHex(p?.config?.color || { r: 255, g: 255, b: 255 }, '#fff');
         return {
           id: p?.id,
           name: p?.name,
@@ -242,6 +319,7 @@ export default function Dashboard() {
   const compactEvents = useMemo(() => displayEvents.slice(0, 4), [displayEvents]);
   const [goFlash, setGoFlash] = useState(false);
   const [lastCdMs, setLastCdMs] = useState<number>(0);
+  const isPostStageOverlay = (s?.stagePhase === 'stage_finished') && (Number(s?.postStageMsRemaining || 0) > 0);
   // Resizable split between Standings (left) and Preview (right)
   const splitRef = useRef<HTMLDivElement | null>(null);
   const [leftWidth, setLeftWidth] = useState<number>(() => {
@@ -347,8 +425,7 @@ export default function Dashboard() {
           const r = p?.results?.[idx];
           const points = Number(r?.points ?? 0);
           const placement = Number(r?.placement ?? 0);
-          const col = p?.config?.color || { r: 255, g: 255, b: 255 };
-          const colorHex = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
+          const colorHex = rgbToHex(p?.config?.color || { r: 255, g: 255, b: 255 }, '#fff');
           if (points > 0) arr.push({ id: p?.id, name: p?.name, placement, points, colorHex });
         });
       } else {
@@ -356,8 +433,7 @@ export default function Dashboard() {
           const r = p?.results?.[idx];
           const points = Number(r?.points ?? 0);
           const placement = Number(r?.placement ?? 0);
-          const col = p?.config?.color || { r: 255, g: 255, b: 255 };
-          const colorHex = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
+          const colorHex = rgbToHex(p?.config?.color || { r: 255, g: 255, b: 255 }, '#fff');
           if (points > 0) arr.push({ id: p?.id, name: p?.name, placement, points, colorHex });
         });
       }
@@ -469,7 +545,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div style={{ padding: 16 }}>
+    <div style={{ padding: 16, minHeight: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       {/* Reward Claim Bursts (supports many simultaneous claims) */}
       {claimBursts.length > 0 && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 2000, pointerEvents: 'none' }}>
@@ -529,13 +605,13 @@ export default function Dashboard() {
           `}</style>
         </div>
       )}
-      {/* Big Fancy Countdown Overlay */}
+      {/* Big Fancy Countdown Overlay (with boosted cheers) */}
       {(() => {
         const ms = Number(s?.countdownMsRemaining || 0);
         if (!(ms > 0)) return null;
         const sec = Math.max(1, Math.ceil(ms / 1000));
         return (
-          <div key={`cd-${sec}`} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 2200, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 2200, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
             {/* rotating neon rings */}
             <div style={{ position: 'absolute', width: 520, height: 520, borderRadius: '50%', filter: 'blur(1px)', opacity: 0.9, animation: 'spinA 10s linear infinite', background: `conic-gradient(from 0deg, #6cf 0%, transparent 30%, #9cf 50%, transparent 60%, #6cf 100%)` }} />
             <div style={{ position: 'absolute', width: 360, height: 360, borderRadius: '50%', filter: 'blur(1px)', opacity: 0.8, animation: 'spinB 7s linear infinite reverse', background: `conic-gradient(from 45deg, #fc6 0%, transparent 40%, #f96 65%, transparent 80%, #fc6 100%)` }} />
@@ -557,7 +633,7 @@ export default function Dashboard() {
               ))}
             </div>
             {/* big number */}
-            <div style={{ position: 'relative', textAlign: 'center' }}>
+            <div style={{ position: 'relative', textAlign: 'center', zIndex: 2 }}>
               <div style={{ color: '#9df', fontWeight: 700, letterSpacing: 2, marginBottom: 8, textShadow: '0 0 10px #036' }}>RACE STARTS IN</div>
               <div style={{
                 fontSize: 220,
@@ -569,15 +645,12 @@ export default function Dashboard() {
               }}>{sec}</div>
               <div style={{ marginTop: 10, fontSize: 16, color: '#cde' }}>Get Ready!</div>
             </div>
+            <BoostedCheerLayer items={cheerFx} rMin={240} rMax={420} animation="boostPop" keyPrefix="boost" chipBg="#081019" />
             <style>{`
               @keyframes spinA { to { transform: rotate(360deg) } }
               @keyframes spinB { to { transform: rotate(-360deg) } }
               @keyframes fallFast { 0% { transform: translateY(-10%) } 100% { transform: translateY(120vh) } }
-              @keyframes countPop {
-                0% { transform: scale(.6); opacity: 0 }
-                50% { transform: scale(1.05); opacity: 1 }
-                100% { transform: scale(1.0); opacity: 1 }
-              }
+              @keyframes countPop { 0% { transform: scale(.6); opacity: 0 } 50% { transform: scale(1.05); opacity: 1 } 100% { transform: scale(1.0); opacity: 1 } }
             `}</style>
           </div>
         );
@@ -665,7 +738,7 @@ export default function Dashboard() {
                 ))}
               </div>
             )}
-            <div style={{ position: 'relative', textAlign: 'center', padding: 24 }}>
+            <div style={{ position: 'relative', textAlign: 'center', padding: 24, zIndex: 2 }}>
               <div style={{ color: '#9df', marginBottom: 8, fontWeight: 700, letterSpacing: 2 }}>AWARD CEREMONY</div>
               <div style={{ fontSize: 14, color: '#8aa', marginBottom: 16 }}>Celebrating final standings (low → high)</div>
               <div style={{
@@ -695,6 +768,7 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
+            <BoostedCheerLayer items={cheerFx} rMin={280} rMax={520} animation="cerCheer" keyPrefix="cer-cheer" chipBg="#0b0f15" saturate={1.6} />
             {/* Ceremony keyframes */}
             <style>{`
               @keyframes popIn { 0% { transform: translateY(30px) scale(.95); opacity: 0 } 100% { transform: translateY(0) scale(1); opacity: 1 } }
@@ -732,6 +806,7 @@ export default function Dashboard() {
                 <button onClick={() => setShowPodium(false)} style={{ padding: '8px 12px', background: '#1a1f28', border: '3px solid #333', color: '#cde' }}>Close</button>
               </div>
             </div>
+            <BoostedCheerLayer items={cheerFx} rMin={200} rMax={360} animation="podCheer" keyPrefix="pod-cheer" chipBg="#0b0f15" saturate={1.6} />
           </div>
         );
       })()}
@@ -739,10 +814,11 @@ export default function Dashboard() {
         <div
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000
+            zIndex: 1000,
+            overflow: 'hidden'
           }}
         >
-          <div style={{ textAlign: 'center', padding: 16, border: '4px solid #6cf', background: '#0f1115', boxShadow: '0 8px 24px rgba(0,0,0,0.6)' }}>
+          <div style={{ position: 'relative', textAlign: 'center', padding: 16, border: '4px solid #6cf', background: '#0f1115', boxShadow: '0 8px 24px rgba(0,0,0,0.6)', zIndex: 2 }}>
             <div style={{ fontSize: 18, color: '#9df', marginBottom: 6 }}>Next stage in</div>
             <div style={{ fontSize: 72, fontWeight: 900, color: '#fc6', textShadow: '0 0 12px #630', marginBottom: 12 }}>
               {Math.max(0, Math.ceil((s?.postStageMsRemaining || 0) / 1000))}
@@ -759,35 +835,71 @@ export default function Dashboard() {
               ))}
             </ol>
           </div>
+          <BoostedCheerLayer items={cheerFx} rMin={220} rMax={420} animation="postCheer" keyPrefix="post-cheer" chipBg="#0b0f15" />
         </div>
       )}
-      {/* Caption: Title — Current Stage */}
+      {/* Header: Title centered, ticker+playlist left, QR right, statuses centered */}
       {(() => {
         const idx = typeof s?.stageIndex === 'number' ? s.stageIndex : -1;
         const stageName = idx >= 0 ? (s?.stages?.[idx]?.name || s?.stages?.[idx]?.id) : '-';
         return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-            <span style={{
-              fontWeight: 1000,
-              fontSize: 32,
-              background: 'linear-gradient(90deg,#9cf,#fff,#9cf)',
-              WebkitBackgroundClip: 'text',
-              backgroundClip: 'text',
-              color: 'transparent',
-              textShadow: '0 0 12px #069',
-              backgroundSize: '200% auto',
-              animation: 'neonShift 6s linear infinite, neonGlow 2.4s ease-in-out infinite alternate',
-              letterSpacing: 1.2,
-            }}>{String(s?.title || 'Marble Race')}</span>
-            <span style={{ color: '#555' }}>—</span>
-            <span style={{
-              border: '4px solid #fc6',
-              padding: '3px 10px',
-              color: '#fc6',
-              fontWeight: 900,
-              background: 'rgba(40,30,0,0.35)',
-              boxShadow: '0 0 12px #630',
-            }}>{stageName}</span>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {/* Title row (centered) */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              <span style={{
+                fontWeight: 1000,
+                fontSize: 32,
+                background: 'linear-gradient(90deg,#9cf,#fff,#9cf)',
+                WebkitBackgroundClip: 'text',
+                backgroundClip: 'text',
+                color: 'transparent',
+                textShadow: '0 0 12px #069',
+                backgroundSize: '200% auto',
+                animation: 'neonShift 6s linear infinite, neonGlow 2.4s ease-in-out infinite alternate',
+                letterSpacing: 1.2,
+              }}>{String(s?.title || 'Marble Race')}</span>
+              <span style={{ color: '#555' }}>—</span>
+              <span style={{
+                border: '4px solid #fc6',
+                padding: '3px 10px',
+                color: '#fc6',
+                fontWeight: 900,
+                background: 'rgba(40,30,0,0.35)',
+                boxShadow: '0 0 12px #630',
+              }}>{stageName}</span>
+            </div>
+            {/* Middle row: left (ticker + playlist), right (QR) */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <TickerLatest line={displayEvents[0] || null} players={buildPlayerColorMap(s)} width={420} height={152} />
+                {/* Playlist (optional) */}
+                {(() => {
+                  const id = String((s as any)?.spotifyPlaylistId || '').trim();
+                  if (!id) return null;
+                  const src = `https://open.spotify.com/embed/playlist/${id}?utm_source=generator&theme=0`;
+                  return (
+                    <iframe
+                      title="Spotify Playlist"
+                      style={{ borderRadius: 12, border: '0px solid transparent' }}
+                      src={src}
+                      width={360}
+                      height={152}
+                      frameBorder="0"
+                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                      loading="lazy"
+                    />
+                  );
+                })()}
+              </div>
+              <QR url={link} />
+            </div>
+            {/* Status row (centered) */}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
+              <Badge>Global: {s?.globalPhase}</Badge>
+              <Badge>Stage: {s?.stagePhase}</Badge>
+              <Badge>Stage {typeof s?.stageIndex === 'number' ? s.stageIndex + 1 : '-'} / {s?.stages?.length || 0}</Badge>
+              <Countdown msRemaining={s?.countdownMsRemaining} />
+            </div>
             <style>{`
               @keyframes neonShift { to { background-position: 200% center } }
               @keyframes neonGlow { 0% { text-shadow: 0 0 8px #069 } 100% { text-shadow: 0 0 18px #0bf } }
@@ -795,30 +907,9 @@ export default function Dashboard() {
           </div>
         );
       })()}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <Badge>Global: {s?.globalPhase}</Badge>
-        <Badge>Stage: {s?.stagePhase}</Badge>
-        <Badge>Stage {typeof s?.stageIndex === 'number' ? s.stageIndex + 1 : '-'} / {s?.stages?.length || 0}</Badge>
-        <Countdown msRemaining={s?.countdownMsRemaining} />
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* Compact events to the left of QR, fixed height to avoid layout shifts */}
-          <div style={{
-            border: '3px solid #333', background: '#0b0f15', width: 420, height: 128, padding: 6,
-            color: '#9aa', fontSize: 12, lineHeight: 1.2, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'center'
-          }}>
-            {compactEvents.length === 0 ? (
-              <div style={{ opacity: 0.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>No recent events</div>
-            ) : (
-              <ul style={{ margin: 0, paddingLeft: 14 }}>
-                {compactEvents.map((line, i) => (
-                  <li key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <QR url={link} />
-        </div>
-      </div>
+
+      {/* Helper: build player color map */}
+      {null}
       {/* Stage Rewards badges */}
       {(rewards.pool.length > 0) && (
         <Panel title="Stage Rewards">
@@ -852,6 +943,34 @@ export default function Dashboard() {
             <span style={{ fontSize: 12, color: '#6cf' }}>Tier</span>
           </div>
         </Panel>
+      )}
+      {/* Cheer overlays anchored to standings area (hidden during countdown, ceremony, final podium, post-stage overlay) */}
+      {!(Number(s?.countdownMsRemaining || 0) > 0) && !ceremonyRunning && !showPodium && !isPostStageOverlay && (
+      <div className="mr-fx" style={{ pointerEvents: 'none' }}>
+        {cheerFx.map((c) => (
+          <div key={c.id}
+            style={{
+              position: 'fixed', left: c.left, top: c.top,
+              transform: 'translate(-50%, 0)',
+              background: '#0f1115', border: `3px solid ${c.color}`, color: '#cde',
+              padding: '6px 10px', borderRadius: 12, boxShadow: `0 8px 24px ${c.color}44, 0 0 0 2px #000 inset`,
+              animation: 'mrCheerFly 3.5s cubic-bezier(0.35,0.00,0.80,1.00) forwards'
+            }}
+          >
+            <span style={{ color: c.color, fontWeight: 1000, marginRight: 10 }}>{c.playerName || 'Player'}</span>
+            <span style={{ fontSize: 22, marginRight: 8 }}>{c.icon}</span>
+            <span style={{ opacity: 0.9 }}>{c.text}</span>
+          </div>
+        ))}
+        <style>{`
+          @keyframes mrCheerFly {
+            0% { transform: translate(-50%, 0) scale(0.98); opacity: 0.0 }
+            8% { opacity: 1 }
+            60% { transform: translate(-50%, -120px) scale(1.02); opacity: 1 }
+            100% { transform: translate(-50%, -260px) scale(1.04); opacity: 0 }
+          }
+        `}</style>
+      </div>
       )}
       {((s?.stages?.length || 0) === 0) && (
         <Panel title="Waiting">
@@ -930,4 +1049,244 @@ export default function Dashboard() {
       </div>
     </div>
   );
+}
+
+function RollingTicker({ lines, width = 420, height = 152, speedSec }: { lines: string[]; width?: number; height?: number; speedSec?: number }) {
+  const items = (lines || []).filter(Boolean);
+  const duration = speedSec != null ? Math.max(6, speedSec) : Math.max(12, items.length * 2);
+  if (!items.length) {
+    return (
+      <div style={{
+        border: '3px solid #333', background: '#0b0f15', width, height, padding: 6,
+        color: '#9aa', fontSize: 12, lineHeight: 1.2, display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}>
+        <div style={{ opacity: 0.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>No recent events</div>
+      </div>
+    );
+  }
+  const ulStyle: React.CSSProperties = { margin: 0, paddingLeft: 14, listStyle: 'none' } as any;
+  const liStyle: React.CSSProperties = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', padding: '4px 0' } as any;
+  const accent = '#6cf';
+  return (
+    <div style={{ position: 'relative', width, height, border: '3px solid #333', background: '#0b0f15', overflow: 'hidden' }}>
+      <div
+        style={{
+          position: 'absolute', inset: 0, padding: 6, color: '#cde', fontSize: 12, lineHeight: 1.2,
+          display: 'flex', flexDirection: 'column'
+        }}
+      >
+        <div
+          key={`track-${items.length}-${items[0]}`}
+          style={{
+            display: 'inline-block',
+            animation: `mrTickerScroll ${duration}s linear infinite`,
+          }}
+        >
+          <ul style={ulStyle}>
+            {items.map((line, i) => (
+              <li key={`a-${i}`} style={liStyle}>
+                <span style={{ color: accent, marginRight: 6 }}>•</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+          <ul style={ulStyle}>
+            {items.map((line, i) => (
+              <li key={`b-${i}`} style={liStyle}>
+                <span style={{ color: accent, marginRight: 6 }}>•</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      {/* Top/Bottom fade overlays */}
+      <div style={{ pointerEvents: 'none', position: 'absolute', left: 0, right: 0, top: 0, height: 18, background: 'linear-gradient(180deg, #0b0f15 0%, rgba(11,15,21,0) 100%)' }} />
+      <div style={{ pointerEvents: 'none', position: 'absolute', left: 0, right: 0, bottom: 0, height: 18, background: 'linear-gradient(0deg, #0b0f15 0%, rgba(11,15,21,0) 100%)' }} />
+      <style>{`
+        @keyframes mrTickerScroll {
+          0% { transform: translateY(0); }
+          100% { transform: translateY(-50%); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// Stable position helper for boosted cheers (module scope ensures consistent component identity)
+function seedFromId(id: any): number {
+  const str = String(id);
+  let h = 2166136261 >>> 0; // FNV-1a seed
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+function posForCheer(id: any, rMin: number, rMax: number): { x: number; y: number } {
+  const s = seedFromId(id);
+  const angle = ((s % 360) * Math.PI) / 180;
+  const range = Math.max(1, (rMax - rMin) | 0);
+  const r = rMin + (Math.floor(s / 1024) % range);
+  const cx = (typeof window !== 'undefined' ? window.innerWidth : 1920) / 2;
+  const cy = (typeof window !== 'undefined' ? window.innerHeight : 1080) / 2;
+  return { x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r };
+}
+
+// Reusable boosted cheer layer used by overlays
+function BoostedCheerLayer({ items, rMin, rMax, animation, keyPrefix, chipBg = '#0b0f15', saturate = 1.5 }: {
+  items: Array<{ id: number; icon: string; text: string; color: string; playerName: string }>;
+  rMin: number;
+  rMax: number;
+  animation: string;
+  keyPrefix?: string;
+  chipBg?: string;
+  saturate?: number;
+}) {
+  return (
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
+      {items.map((c) => {
+        const { x, y } = posForCheer(c.id, rMin, rMax);
+        return (
+          <div
+            key={`${keyPrefix || 'boost'}-${c.id}`}
+            style={{
+              position: 'fixed', left: x, top: y,
+              transform: 'translate(-50%, -50%)',
+              padding: '10px 14px', borderRadius: 14,
+              background: chipBg, border: `4px solid ${c.color}`, color: '#fff',
+              boxShadow: `0 0 28px ${c.color}AA, 0 0 0 2px #000 inset`, filter: `saturate(${Math.round(saturate*100)}%)`,
+              animation: `${animation} 2000ms cubic-bezier(.2,.9,.2,1) both`,
+            }}
+          >
+            <span style={{ color: c.color, fontWeight: 1000, marginRight: 12 }}>{c.playerName || 'Player'}</span>
+            <span style={{ fontSize: 28, marginRight: 10 }}>{c.icon}</span>
+            <span>{c.text}</span>
+          </div>
+        );
+      })}
+      {/* Centralized keyframes for cheer chip animations */}
+      <style>{`
+        @keyframes boostPop {
+          0% { transform: translate(-50%, -50%) scale(.8); opacity: 0 }
+          20% { opacity: 1 }
+          70% { transform: translate(-50%, -50%) scale(1.08); opacity: 1 }
+          100% { transform: translate(-50%, -60%) scale(1.1); opacity: 0 }
+        }
+        @keyframes cerCheer {
+          0% { transform: translate(-50%, -50%) scale(.8); opacity: 0 }
+          20% { opacity: 1 }
+          70% { transform: translate(-50%, -50%) scale(1.1); opacity: 1 }
+          100% { transform: translate(-50%, -65%) scale(1.12); opacity: 0 }
+        }
+        @keyframes podCheer {
+          0% { transform: translate(-50%, -50%) scale(.82); opacity: 0 }
+          20% { opacity: 1 }
+          70% { transform: translate(-50%, -48%) scale(1.06); opacity: 1 }
+          100% { transform: translate(-50%, -40%) scale(1.08); opacity: 0 }
+        }
+        @keyframes postCheer {
+          0% { transform: translate(-50%, -50%) scale(.82); opacity: 0 }
+          20% { opacity: 1 }
+          70% { transform: translate(-50%, -50%) scale(1.06); opacity: 1 }
+          100% { transform: translate(-50%, -60%) scale(1.08); opacity: 0 }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function buildPlayerColorMap(s: any): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const players = s?.players;
+    const each = (fn: (p: any) => void) => {
+      if (players && typeof players.forEach === 'function') { players.forEach(fn); }
+      else { Object.values(players || {}).forEach((p: any) => fn(p)); }
+    };
+    each((p: any) => {
+      if (!p) return;
+      const col = p?.config?.color || { r: 108, g: 207, b: 255 };
+      const hex = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
+      out[String(p.name || p.id)] = hex;
+    });
+  } catch {}
+  return out;
+}
+
+function TickerLatest({ line, players, width = 420, height = 152 }: { line: string | null; players: Record<string, string>; width?: number; height?: number }) {
+  const boxStyle: React.CSSProperties = {
+    border: '3px solid #333', background: '#0b0f15', width, height, padding: 10,
+    color: '#cde', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 10, overflow: 'hidden'
+  } as any;
+  if (!line) return <div style={boxStyle} />;
+  // Parse "[time] kind: msg"
+  const m = line.match(/^\[(.*?)\]\s*(\w+)(?::\s*(.*))?$/);
+  const time = m?.[1] || '';
+  const kind = (m?.[2] || '').toLowerCase();
+  const msg = m?.[3] || '';
+  const icon = iconForKind(kind);
+  const content = highlightMessage(msg, players);
+  return (
+    <div style={boxStyle}>
+      <div style={{ fontSize: 28, lineHeight: 1 }}>{icon}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: '#7b8a9a' }}>{time} • {kind}</div>
+        <div style={{ fontSize: 16, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{content}</div>
+      </div>
+    </div>
+  );
+}
+
+function iconForKind(kind: string): string {
+  switch (kind) {
+    case 'join': return '👤';
+    case 'spawn': return '🎯';
+    case 'finish': return '🏁';
+    case 'countdown': return '⏱️';
+    case 'stage': return '🧭';
+    case 'race': return '🏎️';
+    case 'lobby': return '🛎️';
+    case 'admin': return '🛡️';
+    case 'ceremony': return '🎉';
+    case 'music': return '🎵';
+    case 'colors': return '🎨';
+    case 'title': return '📝';
+    case 'prep': return '🧰';
+    case 'scenes': return '🗂️';
+    case 'timeout': return '⌛';
+    default: return 'ℹ️';
+  }
+}
+
+function highlightMessage(msg: string, players: Record<string, string>): React.ReactNode {
+  // Try known patterns to extract a player name
+  const patterns: RegExp[] = [
+    /^(.*?) joined lobby$/,
+    /^(.*?) spawned$/,
+    /^Removed player: (.*)$/,
+    /Leader:\s*(.*)$/,
+    /^(.*?) finished\b/,
+  ];
+  for (const re of patterns) {
+    const m = msg.match(re);
+    if (m && m[1]) {
+      const name = m[1].trim();
+      const color = players[name];
+      if (!color) break;
+      const idx = msg.indexOf(name);
+      if (idx >= 0) {
+        const before = msg.slice(0, idx);
+        const after = msg.slice(idx + name.length);
+        return (
+          <span>
+            {before}
+            <span style={{ color, fontWeight: 800 }}>{name}</span>
+            {after}
+          </span>
+        );
+      }
+    }
+  }
+  return msg;
 }

@@ -201,19 +201,51 @@ export const marbleRacePlugin: ServerPlugin = {
         const xfProto = ((req.headers['x-forwarded-proto'] as string) || '').toLowerCase();
         const scheme = xfProto.includes('https') ? 'https' : 'http';
         const xfHostRaw = (req.headers['x-forwarded-host'] as string) || '';
-        const headerHost = xfHostRaw || (req.headers.host as string) || 'localhost:8080';
-        const requestedHost = headerHost.split(',')[0].trim();
-        const envPublicHost = process.env.MARBLERACE_PUBLIC_HOST;
-        // Prefer an IPv4 address when host is localhost, so QR codes are scannable
-        const ipHost = pickLocalIPv4();
-        // Some environments may not expose interfaces; try socket localAddress as a last resort
-        const socketAddr = (req.socket?.localAddress || '').replace(/^::ffff:/, '');
-        const socketHost = socketAddr && !isLocalhost(socketAddr) ? socketAddr : null;
-        const baseHost = envPublicHost || (isLocalhost(requestedHost) ? (ipHost || socketHost || requestedHost) : requestedHost);
-        const hostOnly = extractHostname(baseHost);
+        const headerHostRaw = (req.headers.host as string) || '';
+        const first = (s: string) => s ? s.split(',')[0].trim() : '';
+        const envPublicHost = (process.env.MARBLERACE_PUBLIC_HOST || '').trim();
+        const envPublicFullUrl = (process.env.MARBLERACE_PUBLIC_URL || '').trim();
+        const xfHost = first(xfHostRaw);
+        const reqHost = first(headerHostRaw) || 'localhost:8080';
         const httpPort = Number(process.env.PORT || 8080);
-        const httpUrl = `${scheme}://${hostOnly}:${httpPort}`;
         const colyPort = Number(process.env.MARBLERACE_COLYSEUS_PORT || 2567);
+        // If a full public URL is provided, prefer it verbatim
+        let httpUrl: string | null = null;
+        if (envPublicFullUrl && /^https?:\/\//i.test(envPublicFullUrl)) {
+          httpUrl = envPublicFullUrl;
+        }
+        // Determine host:port to advertise
+        let hostPort = '';
+        if (!httpUrl) {
+          if (envPublicHost) {
+            // env may be host or host:port; if it contains scheme, use as full URL
+            if (/^https?:\/\//i.test(envPublicHost)) {
+              httpUrl = envPublicHost;
+            } else {
+              hostPort = envPublicHost;
+            }
+          } else if (xfHost) {
+            hostPort = xfHost; // trust reverse proxy forwarded host
+          } else {
+            hostPort = reqHost; // direct access
+          }
+          if (!httpUrl) {
+            // If host is localhost, try to replace with LAN IPv4 for QR scannability
+            if (isLocalhost(extractHostname(hostPort))) {
+              const ip = pickLocalIPv4();
+              if (ip) {
+                // preserve port if present, else use server port
+                const hasPort = /:\d+$/.test(hostPort) || /\]:\d+$/.test(hostPort);
+                hostPort = hasPort ? hostPort.replace(/^[^:]+/, ip) : `${ip}:${httpPort}`;
+              }
+            }
+            // If host lacks a port and scheme is non-default, keep it as-is (e.g., 80/443 handled by proxy)
+            const hasPort = /:\d+$/.test(hostPort) || /\]:\d+$/.test(hostPort);
+            httpUrl = `${scheme}://${hostPort}`;
+          }
+        }
+        // Colyseus URL uses host without any existing port, then explicit Colyseus port
+        const hostOnly = extractHostname(hostPort || (httpUrl ? httpUrl.replace(/^https?:\/\//i, '') : reqHost));
         const colyseusUrl = `${scheme}://${hostOnly}:${colyPort}`;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');

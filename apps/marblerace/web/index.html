@@ -2,12 +2,34 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="format-detection" content="telephone=no" />
+    <style>
+      html, body { height: 100%; -webkit-text-size-adjust: 100%; }
+      /* Prevent iOS input focus zoom by keeping font-size >= 16px */
+      input, select, textarea, button { font-size: 16px; }
+      /* Reduce double-tap zoom and tap highlight on interactive elements */
+      a, button, [role="button"] { touch-action: manipulation; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+    </style>
     <title>Marble Race</title>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Prevent accidental double-tap zoom on older mobile browsers
+      (function(){
+        var lastTouchEnd = 0;
+        document.addEventListener('touchend', function(e){
+          var now = Date.now();
+          if (now - lastTouchEnd <= 350) {
+            try { e.preventDefault(); } catch(_){}
+          }
+          lastTouchEnd = now;
+        }, { passive: false });
+        // Best-effort: prevent pinch-gesture zoom where supported
+        document.addEventListener('gesturestart', function(e){ try { e.preventDefault(); } catch(_){ } }, { passive: false });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
   </html>
-

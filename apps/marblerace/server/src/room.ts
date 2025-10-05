@@ -13,7 +13,7 @@ import {
 import { Orchestrator } from './orchestrator.js';
 import { requestClientScanScenes } from './transport.js';
 import { getLastScenes } from './scenes-cache.js';
-import { RaceStateSchema, PlayerSchema, StageSchema, ResultSchema, PointsTierSchema } from './schema.js';
+import { RaceStateSchema, PlayerSchema, StageSchema, ResultSchema, PointsTierSchema, CheerSchema } from './schema.js';
 
 type ClientData = {
   isAdmin?: boolean;
@@ -44,6 +44,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
   private prepTimer?: NodeJS.Timeout;
   private postStageTimer?: NodeJS.Timeout;
   private finishOrder: string[] = []; // playerIds per stage
+  private lastCheerAt: Map<string, number> = new Map();
 
   // Simple admin guard via env token
   // Default aligns with README; empty string disables auth (not recommended)
@@ -200,6 +201,36 @@ export class RaceRoom extends Room<RaceStateSchema> {
       p.config.color.b = clamped.color.b;
     });
 
+    // Player cheer during RUNNING (after spawn)
+    this.onMessage('cheer', (client: Client, payload: { icon?: string; text?: string }) => {
+      const id = this.getClientData(client)?.playerId || client.sessionId;
+      const p = this.state.players.get(id);
+      if (!p) return;
+      if (!p.spawned) return;
+      const sp = this.state.stagePhase;
+      const gp = this.state.globalPhase;
+      const allowed = (sp === 'running') || (sp === 'countdown') || (sp === 'stage_finished') || (gp === 'finished') || (gp === 'intermission' && sp === 'prep');
+      if (!allowed) return;
+      // No meaningful per-player rate limit (intentionally spam-friendly)
+      try { this.lastCheerAt.set(id, Date.now()); } catch {}
+      const icon = String(payload?.icon || '').slice(0, 4) || '🎉';
+      const textRaw = String(payload?.text || '').slice(0, 80);
+      const text = textRaw || `${p.name} cheers!`;
+      const c = new CheerSchema();
+      c.id = Math.floor(Math.random() * 1e9);
+      c.playerId = p.id;
+      c.playerName = p.name;
+      c.icon = icon;
+      c.text = text;
+      c.color.r = p.config.color.r;
+      c.color.g = p.config.color.g;
+      c.color.b = p.config.color.b;
+      c.ts = Date.now();
+      (this.state.cheers as any).push(c);
+      // Trim to avoid unbounded growth (allow more bursty fun)
+      while (this.state.cheers.length > 200) this.state.cheers.shift();
+    });
+
     // Admin messages
     this.onMessage('admin', (client: Client, payload: { token?: string; action: string; data?: any }) => {
       const { token, action, data } = payload || {};
@@ -292,6 +323,21 @@ export class RaceRoom extends Room<RaceStateSchema> {
           this.state.perPostStageDelayMs = ms | 0;
           this.pushTicker('stage', `Auto-advance delay set: ${Math.ceil(this.state.perPostStageDelayMs/1000)}s`);
           if (this.state.stagePhase === 'stage_finished' && this.state.autoAdvance) this.startPostStageTimer();
+          break;
+        }
+        case 'setSpotifyPlaylist': {
+          const raw = String(data?.id ?? '').trim();
+          let id = '';
+          if (raw) {
+            // Accept full URLs, URIs, or plain IDs
+            const m1 = raw.match(/playlist\/(\w{10,})/i);
+            const m2 = raw.match(/spotify:playlist:([A-Za-z0-9]{10,})/i);
+            if (m1) id = m1[1];
+            else if (m2) id = m2[1];
+            else if (/^[A-Za-z0-9]+$/.test(raw)) id = raw; // base62 id
+          }
+          this.state.spotifyPlaylistId = id;
+          this.pushTicker('music', id ? `Playlist set (${id.slice(0,8)}…)` : 'Playlist cleared');
           break;
         }
         case 'setEnforceUniqueColors': {

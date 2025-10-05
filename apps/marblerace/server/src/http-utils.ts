@@ -33,16 +33,14 @@ export function safeJoin(baseDir: string, urlPath: string): string | null {
 /** Determine whether the host string refers to localhost. */
 export function isLocalhost(host: string): boolean {
   let h = host.trim().toLowerCase();
+  // Strip bracketed IPv6
   if (h.startsWith('[')) {
     const end = h.indexOf(']');
     if (end > 0) h = h.slice(1, end);
-  } else {
-    const idx = h.indexOf(':');
-    if (idx > -1 && h.includes('.')) {
-      // host:port (IPv4 / hostname)
-      h = h.slice(0, idx);
-    }
   }
+  // Strip :port for any hostname/IPv4
+  const idx = h.indexOf(':');
+  if (idx > -1) h = h.slice(0, idx);
   return h === 'localhost' || h === '127.0.0.1' || h === '::1';
 }
 

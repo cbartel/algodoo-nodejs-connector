@@ -71,6 +71,7 @@ Primary commands
   - Admin page
     - Visible Admin Token field (also supports `?token=...`), sent with admin actions, persisted to `localStorage`.
     - If token invalid, the server replies with `admin.denied` and the UI shows an alert.
+can we    - Media: supports setting a Spotify playlist (by ID or URL). Server stores `spotifyPlaylistId`; Dashboard embeds the playlist above the event tracker next to the QR.
   - Game page
     - Clean flow: prompt for name → in `'prep'` or `'countdown'` show “Prepare Your Marble”.
     - Points-based customization: 10 points across diameter/density/friction/restitution using +/– controls and progress bars. Values are mapped across protocol clamp ranges.

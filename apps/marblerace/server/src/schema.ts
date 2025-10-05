@@ -34,6 +34,17 @@ export class ResultSchema extends Schema {
   @colyseusType('number') finishedAt = 0; // 0 => undefined
 }
 
+/** Lightweight cheer event broadcast to dashboards. */
+export class CheerSchema extends Schema {
+  @colyseusType('int32') id = 0;
+  @colyseusType('string') playerId = '';
+  @colyseusType('string') playerName = '';
+  @colyseusType('string') icon = '';
+  @colyseusType('string') text = '';
+  @colyseusType(RGBSchema) color = new RGBSchema();
+  @colyseusType('number') ts = 0;
+}
+
 /** Tiered points configuration (count finishers, points per finisher). */
 export class PointsTierSchema extends Schema {
   @colyseusType('int16') count = 0;   // how many finishers get this tier
@@ -89,4 +100,8 @@ export class RaceStateSchema extends Schema {
   @colyseusType('boolean') ceremonyActive = false; // dashboards start ceremony when true
   @colyseusType('int32') ceremonyDwellMs = 10000;  // per-player dwell ms (winner may linger longer client-side)
   @colyseusType('int32') ceremonyVersion = 0;      // increment to retrigger ceremony across dashboards
+  // Optional Spotify playlist to embed on dashboards (default provided)
+  @colyseusType('string') spotifyPlaylistId = '0j4CafKm9tDRwuk56IrGXV';
+  // Ephemeral cheers from players during running
+  @colyseusType([CheerSchema]) cheers = new ArraySchema<CheerSchema>();
 }
