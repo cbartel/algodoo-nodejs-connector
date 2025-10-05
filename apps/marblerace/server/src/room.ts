@@ -374,8 +374,6 @@ export class RaceRoom extends Room<RaceStateSchema> {
           break;
         }
         case 'setMarbleMultiplier': {
-          // Allow only in lobby to keep race deterministic
-          if (this.state.globalPhase !== 'lobby') { debug('setMarbleMultiplier ignored: not in lobby'); break; }
           const raw = Number((data?.value));
           let v = Number.isFinite(raw) ? raw : 1.0;
           v = Math.max(0.5, Math.min(4.0, Math.round(v * 2) / 2)); // 0.5 steps in [0.5,4]
@@ -385,11 +383,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
           break;
         }
         case 'setClampRanges': {
-          // Ranges may only be changed while in lobby (before race starts)
-          if (this.state.globalPhase !== 'lobby') {
-            debug('setClampRanges ignored: not in lobby');
-            break;
-          }
+          // Allow editing ranges any time; server clamps player updates accordingly
           const dataAny = (data || {}) as any;
           const toPair = (v: any, defMin: number, defMax: number, hardMin: number, hardMax: number) => {
             const min = Number(v?.min);

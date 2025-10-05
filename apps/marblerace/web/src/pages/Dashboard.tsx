@@ -1,4 +1,37 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react';
+// Shared helpers (module-scope) so subcomponents can use them
+const badgeColorForTier = (tier: number) => {
+  if (tier === 0) return '#ffd700';
+  if (tier === 1) return '#c0c0c0';
+  if (tier === 2) return '#cd7f32';
+  return '#6cf';
+};
+export const renderRewardBadge = (pts: number, tier: number, key?: React.Key, compact = false) => {
+  const color = badgeColorForTier(tier);
+  const glow = color === '#ffd700' ? '#ffdf70' : color === '#c0c0c0' ? '#e0e0e0' : color === '#cd7f32' ? '#f0b07a' : '#8fe3ff';
+  const emoji = tier === 0 ? '🏆' : tier === 1 ? '🥈' : tier === 2 ? '🥉' : '🎖️';
+  const baseStyle: React.CSSProperties = compact ? {
+    border: `3px solid ${color}`,
+    background: '#111',
+    boxShadow: `0 0 0 2px #222 inset, 0 0 10px ${glow}`,
+    padding: '4px 6px',
+    display: 'flex', alignItems: 'center', gap: 6,
+    minWidth: 64, justifyContent: 'center'
+  } : {
+    border: `4px solid ${color}`,
+    background: '#111',
+    boxShadow: `0 0 0 2px #222 inset, 0 0 14px ${glow}`,
+    padding: '8px 10px',
+    display: 'flex', alignItems: 'center', gap: 8,
+    minWidth: 92, justifyContent: 'center'
+  };
+  return (
+    <div key={key} style={baseStyle}>
+      <span style={{ filter: 'drop-shadow(0 1px 0 #000)' }}>{emoji}</span>
+      <span style={{ fontWeight: 900, color, fontSize: compact ? 12 : 16 }}>{pts}</span>
+    </div>
+  );
+};
 import { Panel, Table, Badge, Countdown, QR } from 'marblerace-ui-kit';
 import { connectRoom, getServerConfig } from '../lib/colyseus';
 
@@ -514,35 +547,6 @@ export default function Dashboard() {
   // Note: reward pool/claimedCount still used for on-screen badges, but
   // animations now react to per-player deltas for better concurrency.
 
-  const badgeColorForTier = (tier: number) => {
-    // Tier 0: gold, 1: silver, 2: bronze, others: cyan
-    if (tier === 0) return '#ffd700';
-    if (tier === 1) return '#c0c0c0';
-    if (tier === 2) return '#cd7f32';
-    return '#6cf';
-  };
-
-  const renderRewardBadge = (pts: number, tier: number, key?: React.Key) => {
-    const color = badgeColorForTier(tier);
-    const glow = color === '#ffd700' ? '#ffdf70' : color === '#c0c0c0' ? '#e0e0e0' : color === '#cd7f32' ? '#f0b07a' : '#8fe3ff';
-    const emoji = tier === 0 ? '🏆' : tier === 1 ? '🥈' : tier === 2 ? '🥉' : '🎖️';
-    return (
-      <div key={key} style={{
-        border: `4px solid ${color}`,
-        background: '#111',
-        boxShadow: `0 0 0 2px #222 inset, 0 0 14px ${glow}`,
-        padding: '8px 10px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        minWidth: 92,
-        justifyContent: 'center',
-      }}>
-        <span style={{ filter: 'drop-shadow(0 1px 0 #000)' }}>{emoji}</span>
-        <span style={{ fontWeight: 900, color }}>{pts}</span>
-      </div>
-    );
-  };
 
   return (
     <div style={{ padding: 16, minHeight: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -838,112 +842,131 @@ export default function Dashboard() {
           <BoostedCheerLayer items={cheerFx} rMin={220} rMax={420} animation="postCheer" keyPrefix="post-cheer" chipBg="#0b0f15" />
         </div>
       )}
-      {/* Header: Title centered, ticker+playlist left, QR right, statuses centered */}
+      {/* Main layout: Live Preview dominant, right-side info column */}
       {(() => {
         const idx = typeof s?.stageIndex === 'number' ? s.stageIndex : -1;
         const stageName = idx >= 0 ? (s?.stages?.[idx]?.name || s?.stages?.[idx]?.id) : '-';
+        const playlistId = String((s as any)?.spotifyPlaylistId || '').trim();
         return (
-          <div style={{ display: 'grid', gap: 8 }}>
-            {/* Title row (centered) */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-              <span style={{
-                fontWeight: 1000,
-                fontSize: 32,
-                background: 'linear-gradient(90deg,#9cf,#fff,#9cf)',
-                WebkitBackgroundClip: 'text',
-                backgroundClip: 'text',
-                color: 'transparent',
-                textShadow: '0 0 12px #069',
-                backgroundSize: '200% auto',
-                animation: 'neonShift 6s linear infinite, neonGlow 2.4s ease-in-out infinite alternate',
-                letterSpacing: 1.2,
-              }}>{String(s?.title || 'Marble Race')}</span>
-              <span style={{ color: '#555' }}>—</span>
-              <span style={{
-                border: '4px solid #fc6',
-                padding: '3px 10px',
-                color: '#fc6',
-                fontWeight: 900,
-                background: 'rgba(40,30,0,0.35)',
-                boxShadow: '0 0 12px #630',
-              }}>{stageName}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 420px', gap: 12, alignItems: 'stretch', height: 'calc(100vh - 32px)' }}>
+            {/* Live Preview (16:10) */}
+            <div style={{ position: 'relative', minHeight: 0, minWidth: 0, background: '#000', border: '4px solid #222', overflow: 'hidden' }}>
+              {captureStream ? (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ height: '100%', width: 'auto', maxWidth: '100%', aspectRatio: '16 / 10', background: 'black', position: 'relative' }}>
+                    <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                    <button onClick={stopCapture} aria-label="Stop" title="Stop" style={{ position: 'absolute', top: 8, right: 8, background: '#200', color: '#f66', border: '3px solid #f66', cursor: 'pointer', fontWeight: 900, zIndex: 5 }}>×</button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ position: 'absolute', inset: 0, padding: 12 }}>
+                  <Panel title="Live Preview" style={{ height: '100%' } as any}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <div style={{ color: '#9aa', fontSize: 12 }}>Capture your Algodoo window locally</div>
+                      <div>
+                        <button onClick={startCapture} style={{ background: '#122', color: '#9df', border: '3px solid #6cf', padding: '4px 8px', cursor: 'pointer', fontWeight: 700 }}>Share Window</button>
+                      </div>
+                    </div>
+                    <div style={{ position: 'relative', height: '100%', display: 'grid', placeItems: 'center', background: '#0b0f15' }}>
+                      <div style={{ width: '100%', maxWidth: '100%', maxHeight: '100%', aspectRatio: '16 / 10', display: 'grid', placeItems: 'center', color: '#567', padding: 12, textAlign: 'center' }}>
+                        {(s?.stages?.length || 0) === 0 ? (
+                          <div>
+                            <div style={{ fontSize: 18, color: '#9df', marginBottom: 6 }}>Waiting for race…</div>
+                            <div style={{ fontSize: 14, color: '#9aa' }}>Admin has not created a race yet.</div>
+                          </div>
+                        ) : (
+                          <div>Click “Share Window” to preview Algodoo locally</div>
+                        )}
+                      </div>
+                    </div>
+                  </Panel>
+                </div>
+              )}
+              {/* No overlays on the preview to avoid collisions */}
             </div>
-            {/* Middle row: left (ticker + playlist), right (QR) */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <TickerLatest line={displayEvents[0] || null} players={buildPlayerColorMap(s)} width={420} height={152} />
-                {/* Playlist (optional) */}
-                {(() => {
-                  const id = String((s as any)?.spotifyPlaylistId || '').trim();
-                  if (!id) return null;
-                  const src = `https://open.spotify.com/embed/playlist/${id}?utm_source=generator&theme=0`;
-                  return (
-                    <iframe
-                      title="Spotify Playlist"
-                      style={{ borderRadius: 12, border: '0px solid transparent' }}
-                      src={src}
-                      width={360}
-                      height={152}
-                      frameBorder="0"
-                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                      loading="lazy"
-                    />
-                  );
-                })()}
+            {/* Right column: header, status, ticker, playlist, standings, QR, rewards */}
+            <div style={{ display: 'grid', gridTemplateRows: 'auto auto auto 1fr auto auto', gap: 12, minHeight: 0, minWidth: 0 }}>
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{
+                  fontWeight: 1000,
+                  fontSize: 20,
+                  background: 'linear-gradient(90deg,#9cf,#fff,#9cf)',
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  color: 'transparent',
+                  textShadow: '0 0 10px #069',
+                  backgroundSize: '200% auto',
+                  animation: 'neonShift 6s linear infinite, neonGlow 2.4s ease-in-out infinite alternate',
+                  letterSpacing: 1.2,
+                }}>{String(s?.title || 'Marble Race')}</span>
+                <span style={{ color: '#555' }}>—</span>
+                <span style={{ border: '3px solid #fc6', padding: '2px 8px', color: '#fc6', fontWeight: 900, background: 'rgba(40,30,0,0.35)', boxShadow: '0 0 12px #630' }}>{stageName}</span>
               </div>
-              <QR url={link} />
+              {/* Status row */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Badge>Global: {s?.globalPhase}</Badge>
+                <Badge>Stage: {s?.stagePhase}</Badge>
+                <Badge>Stage {typeof s?.stageIndex === 'number' ? s.stageIndex + 1 : '-'} / {s?.stages?.length || 0}</Badge>
+                <Countdown msRemaining={s?.countdownMsRemaining} />
+              </div>
+              {/* Ticker + QR row (same height) */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                <TickerLatest line={displayEvents[0] || null} players={buildPlayerColorMap(s)} width={300} height={96} />
+                <div style={{ height: 96, display: 'flex', alignItems: 'center' }}>
+                  <QR url={link} size={80} />
+                </div>
+              </div>
+              {null}
+              <div style={{ display: 'grid', gridTemplateRows: '1fr 84px', minHeight: 0, gap: 8, minWidth: 0 }}>
+                {/* Compact Standings */}
+                <div style={{ minHeight: 0, overflow: 'auto' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ color: '#9df', fontWeight: 700 }}>Standings</span>
+                    <span style={{ color: '#7b8a9a', fontSize: 12 }}>Top 10</span>
+                  </div>
+                  <div ref={standingsRef} style={{ fontSize: 13, lineHeight: 1.1 }}>
+                    <Table
+                      headers={["#", "Player", "Total"]}
+                      rows={standings.slice(0, 10).map((p: any, i: number) => [
+                        i+1,
+                        <span
+                          key={`${p.id||p.name}-name`}
+                          ref={(el) => { if (el) nameRefs.current[String(p.id||p.name)] = el; }}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        >
+                          <span title="player color" style={{ width: 10, height: 10, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: p.colorHex }} />
+                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{p.name}</span>
+                        </span>,
+                        p.total
+                      ])}
+                    />
+                  </div>
+                </div>
+                {/* Ultra-compact Stage Rewards with auto-wrap badges (fixed max height) */}
+                <RewardsCompact pool={rewards.pool} remaining={rewards.remaining} />
+              </div>
+              {playlistId && (
+                <div>
+                  <iframe
+                    title="Spotify Playlist"
+                    style={{ borderRadius: 12, border: '0px solid transparent' }}
+                    src={`https://open.spotify.com/embed/playlist/${playlistId}?utm_source=generator&theme=0`}
+                    width={420}
+                    height={96}
+                    frameBorder="0"
+                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                    loading="lazy"
+                  />
+                </div>
+              )}
             </div>
-            {/* Status row (centered) */}
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
-              <Badge>Global: {s?.globalPhase}</Badge>
-              <Badge>Stage: {s?.stagePhase}</Badge>
-              <Badge>Stage {typeof s?.stageIndex === 'number' ? s.stageIndex + 1 : '-'} / {s?.stages?.length || 0}</Badge>
-              <Countdown msRemaining={s?.countdownMsRemaining} />
-            </div>
-            <style>{`
-              @keyframes neonShift { to { background-position: 200% center } }
-              @keyframes neonGlow { 0% { text-shadow: 0 0 8px #069 } 100% { text-shadow: 0 0 18px #0bf } }
-            `}</style>
           </div>
         );
       })()}
 
-      {/* Helper: build player color map */}
+      {/* Helper: build player color map (noop line to keep structure) */}
       {null}
-      {/* Stage Rewards badges */}
-      {(rewards.pool.length > 0) && (
-        <Panel title="Stage Rewards">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
-              {rewards.remaining.map((r, i) => renderRewardBadge(r.points, r.tier, i))}
-              {rewards.remaining.length === 0 && (
-                <div style={{ color: '#6f6', fontWeight: 700 }}>All rewards claimed!</div>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: '#9df' }}>Remaining</span>
-              <div style={{
-                border: '4px solid #6cf',
-                background: '#0b0f15',
-                padding: '6px 10px',
-                minWidth: 72,
-                textAlign: 'center',
-                boxShadow: '0 0 0 2px #036 inset'
-              }}>
-                <span style={{ fontWeight: 900, color: '#6cf' }}>{rewards.remaining.reduce((a, b) => a + (b.points|0), 0)}</span>
-              </div>
-            </div>
-          </div>
-          <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {/* Legend */}
-            <span style={{ fontSize: 12, color: '#9aa' }}>Legend:</span>
-            <span style={{ fontSize: 12, color: '#ffd700' }}>Gold</span>
-            <span style={{ fontSize: 12, color: '#c0c0c0' }}>Silver</span>
-            <span style={{ fontSize: 12, color: '#cd7f32' }}>Bronze</span>
-            <span style={{ fontSize: 12, color: '#6cf' }}>Tier</span>
-          </div>
-        </Panel>
-      )}
       {/* Cheer overlays anchored to standings area (hidden during countdown, ceremony, final podium, post-stage overlay) */}
       {!(Number(s?.countdownMsRemaining || 0) > 0) && !ceremonyRunning && !showPodium && !isPostStageOverlay && (
       <div className="mr-fx" style={{ pointerEvents: 'none' }}>
@@ -972,81 +995,8 @@ export default function Dashboard() {
         `}</style>
       </div>
       )}
-      {((s?.stages?.length || 0) === 0) && (
-        <Panel title="Waiting">
-          <div>Waiting for race… Admin has not created a race yet.</div>
-        </Panel>
-      )}
-      <div ref={splitRef} style={{ display: 'flex', gap: 12, marginTop: 12, alignItems: 'stretch', height: mainHeight, overflow: 'hidden' }}>
-        <div style={{ flex: '0 0 auto', width: leftWidth, minWidth: 360, height: '100%', overflow: 'auto' }}>
-          <Panel title="Standings">
-            <div ref={standingsRef}>
-              <Table
-                headers={["#", "Player", ...Array.from({ length: s?.stages?.length || 0 }).map((_, i) => `S${i+1}`), "Total"]}
-                rows={standings.map((p: any, i: number) => [
-                  i+1,
-                  <span
-                    key={`${p.id||p.name}-name`}
-                    ref={(el) => { if (el) nameRefs.current[String(p.id||p.name)] = el; }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    <span title="player color" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: p.colorHex }} />
-                    <span>{p.name}</span>
-                  </span>,
-                  ...(p.perStage || []),
-                  p.total
-                ])}
-              />
-            </div>
-          </Panel>
-        </div>
-        {/* Resizer */}
-        <div
-          onMouseDown={() => setResizing(true)}
-          style={{ width: 8, cursor: 'col-resize', background: '#222', border: '3px solid #333', borderTop: 0, borderBottom: 0 }}
-          title="Drag to resize"
-          role="separator"
-          aria-orientation="vertical"
-        />
-        <div style={{ flex: 1, minWidth: 320, height: '100%', overflow: 'hidden' }}>
-          {captureStream ? (
-            <div
-              style={{
-                position: 'relative',
-                background: 'black',
-                height: '100%',
-                overflow: 'hidden',
-              }}
-            >
-              <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-              <button onClick={stopCapture} aria-label="Stop" title="Stop" style={{
-                position: 'absolute', top: 6, right: 6, background: '#200', color: '#f66', border: '3px solid #f66', cursor: 'pointer', fontWeight: 900
-              }}>×</button>
-            </div>
-          ) : (
-            <Panel title="Live Preview">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <div style={{ color: '#9aa', fontSize: 12 }}>Capture your Algodoo window locally</div>
-                <div>
-                  <button onClick={startCapture} style={{ background: '#122', color: '#9df', border: '3px solid #6cf', padding: '4px 8px', cursor: 'pointer', fontWeight: 700 }}>Share Window</button>
-                </div>
-              </div>
-              <div
-                style={{
-                  position: 'relative',
-                  background: '#0b0f15',
-                  height: '100%',
-                  overflow: 'hidden',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#567' }}>
-                  Click “Share Window” to preview Algodoo locally
-                </div>
-              </div>
-            </Panel>
-          )}
-        </div>
-      </div>
+      {/* Waiting state is now shown inside the Live Preview card */}
+      {/* End main layout */}
     </div>
   );
 }
@@ -1257,6 +1207,49 @@ function iconForKind(kind: string): string {
     case 'timeout': return '⌛';
     default: return 'ℹ️';
   }
+}
+
+function RewardsCompact({ pool, remaining }: { pool: Array<{ points: number; tier: number }>; remaining: Array<{ points: number; tier: number }> }) {
+  const outerRef = useRef<HTMLDivElement | null>(null);
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const badgesRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(1);
+  const totalRemaining = useMemo(() => remaining.reduce((a, b) => a + (b.points | 0), 0), [remaining]);
+  const totalPool = useMemo(() => (pool.reduce((a, b) => a + (b.points | 0), 0) || 1), [pool]);
+  const pct = Math.max(0, Math.min(100, Math.round(100 - (totalRemaining / totalPool) * 100)));
+  // Recalculate scale on content/size changes
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    const inner = badgesRef.current;
+    const header = headerRef.current;
+    if (!outer || !inner) return;
+    const headerH = header ? header.clientHeight : 18;
+    const avail = Math.max(8, outer.clientHeight - headerH - 2);
+    const need = inner.scrollHeight;
+    const s = Math.max(0.6, Math.min(1, avail / Math.max(1, need)));
+    setScale(Number.isFinite(s) ? s : 1);
+  }, [remaining?.length, totalRemaining]);
+  const scaledWidth = `${(1 / (scale || 1)) * 100}%`;
+  return (
+    <div ref={outerRef} style={{ minHeight: 0, overflow: 'hidden' }}>
+      <div ref={headerRef} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+        <span style={{ color: '#9df', fontWeight: 700, fontSize: 12 }}>Stage Rewards</span>
+        <span style={{ color: '#9df', fontSize: 12 }}>Remaining: <strong style={{ color: '#6cf' }}>{totalRemaining}</strong></span>
+      </div>
+      <div ref={badgesRef} style={{ transform: `scale(${scale})`, transformOrigin: 'left top', width: scaledWidth }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', overflow: 'hidden' }}>
+          {remaining.map((r, i) => renderRewardBadge(r.points, r.tier, i, true))}
+          {remaining.length === 0 && (
+            <div style={{ color: '#6f6', fontWeight: 700, fontSize: 12 }}>All rewards claimed!</div>
+          )}
+        </div>
+      </div>
+      {/* Slim progress bar aligned under badges */}
+      <div style={{ border: '3px solid #333', height: 6, background: '#0b0f15', boxShadow: '0 0 0 2px #111 inset', marginTop: 2 }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(90deg,#6cf,#9cf)' }} />
+      </div>
+    </div>
+  );
 }
 
 function highlightMessage(msg: string, players: Record<string, string>): React.ReactNode {

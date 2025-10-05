@@ -509,7 +509,6 @@ function MusicSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string
 }
 
 function MultiplierSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
-  const locked = String(state?.globalPhase || '') !== 'lobby';
   const [val, setVal] = React.useState<number>(() => {
     const v = Number(state?.marbleMultiplier ?? 1);
     return Number.isFinite(v) ? v : 1;
@@ -524,11 +523,10 @@ function MultiplierSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: s
       <Badge>Marble Multiplier</Badge>
       <select
         value={val}
-        disabled={locked}
         onChange={(e) => {
           const v = Number(e.target.value);
           setVal(v);
-          if (!locked) sendAdmin('setMarbleMultiplier', { value: v });
+          sendAdmin('setMarbleMultiplier', { value: v });
         }}
         style={{ padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
       >
@@ -536,7 +534,7 @@ function MultiplierSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: s
           <option key={o} value={o}>{`x${o.toFixed(1)}`}</option>
         ))}
       </select>
-      <span style={{ color: '#9df', fontSize: 12 }}>(Editable in lobby; auto-applies)</span>
+      <span style={{ color: '#9df', fontSize: 12 }}>(Auto-applies)</span>
     </div>
   );
 }
@@ -549,7 +547,6 @@ function RangesSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: strin
   });
   const s = (state as any) || {};
   const rr = s?.ranges || {};
-  const locked = String(s?.globalPhase || '') !== 'lobby';
   const [radius, setRadius] = React.useState<Pair>(getPair(rr?.radius, 0.02, 0.045));
   const [density, setDensity] = React.useState<Pair>(getPair(rr?.density, 0.5, 4.0));
   const [friction, setFriction] = React.useState<Pair>(getPair(rr?.friction, 0.0, 1.0));
@@ -576,7 +573,7 @@ function RangesSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: strin
   const numberInputStyle = { width: 90, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' } as React.CSSProperties;
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <Badge>Value Ranges {locked ? '(Locked—race started)' : '(Editable in lobby)'}</Badge>
+      <Badge>Value Ranges (Auto-applies)</Badge>
       {([
         { key: 'radius', label: 'Diameter (m)', value: radius, set: setRadius, step: 0.001, d: decs.radius },
         { key: 'density', label: 'Density', value: density, set: setDensity, step: 0.1, d: decs.density },
@@ -590,9 +587,16 @@ function RangesSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: strin
             type="number"
             step={step}
             value={fmt(value.min, (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution))}
-            disabled={locked}
-            onChange={(e) => set({ min: Number(e.target.value), max: value.max })}
-            onBlur={(e) => set({ min: round(Number(e.target.value), (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution)), max: value.max })}
+            onChange={(e) => {
+              const next = { min: Number(e.target.value), max: value.max };
+              set(next);
+              sendAdmin('setClampRanges', { [key]: next });
+            }}
+            onBlur={(e) => {
+              const next = { min: round(Number(e.target.value), (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution)), max: value.max };
+              set(next);
+              sendAdmin('setClampRanges', { [key]: next });
+            }}
             style={numberInputStyle}
           />
           <label style={{ color: '#aaa' }}>Max</label>
@@ -600,16 +604,20 @@ function RangesSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: strin
             type="number"
             step={step}
             value={fmt(value.max, (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution))}
-            disabled={locked}
-            onChange={(e) => set({ min: value.min, max: Number(e.target.value) })}
-            onBlur={(e) => set({ min: value.min, max: round(Number(e.target.value), (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution)) })}
+            onChange={(e) => {
+              const next = { min: value.min, max: Number(e.target.value) };
+              set(next);
+              sendAdmin('setClampRanges', { [key]: next });
+            }}
+            onBlur={(e) => {
+              const next = { min: value.min, max: round(Number(e.target.value), (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution)) };
+              set(next);
+              sendAdmin('setClampRanges', { [key]: next });
+            }}
             style={numberInputStyle}
           />
         </div>
       ))}
-      <div>
-        <Button onClick={() => sendAdmin('setClampRanges', { radius, density, friction, restitution })} disabled={locked}>Apply Ranges</Button>
-      </div>
     </div>
   );
 }
