@@ -1,10 +1,11 @@
+import { PixelProvider } from 'marblerace-ui-kit';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { PixelProvider } from 'marblerace-ui-kit';
+
 import Admin from './pages/Admin';
-import Game from './pages/Game';
 import Dashboard from './pages/Dashboard';
+import Game from './pages/Game';
 
 function App() {
   return (

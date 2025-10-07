@@ -1,7 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { clampRanges as defaultClampRanges, defaultMarbleConfig } from 'marblerace-protocol';
 import { Button, Panel, Badge } from 'marblerace-ui-kit';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+
 import { connectRoom, getPlayerKey } from '../lib/colyseus';
+
+// Shared cheer definition used by Game and CheerPanel
+interface CheerDef { icon: string; text: string }
 
 export default function Game() {
   const [room, setRoom] = useState<any>(null);
@@ -20,7 +24,6 @@ export default function Game() {
   const [flashSaved, setFlashSaved] = useState(false);
   // Cheers UI
   const [cheerEdit, setCheerEdit] = useState(false);
-  type CheerDef = { icon: string; text: string };
   const [cheers, setCheers] = useState<CheerDef[]>([]);
   const forceCheerUi = useRef(0);
   const lastCheerSentAtRef = useRef(0);
@@ -103,7 +106,7 @@ export default function Game() {
 
   function join() {
     if (!room) return;
-    if ((state as any)?.enforceUniqueColors && hasColorConflict) {
+    if ((state)?.enforceUniqueColors && hasColorConflict) {
       setColorDenied('Color too similar. Pick one of the suggestions.');
       return;
     }
@@ -139,7 +142,7 @@ export default function Game() {
   const me = useMemo(() => {
     if (!state || !room) return null;
     const pid = playerKeyRef.current;
-    const players: any = (state as any).players;
+    const players: any = (state).players;
     if (!players) return null;
     // Colyseus MapSchema compatibility: prefer get/forEach, fallback to index access
     try {
@@ -153,11 +156,11 @@ export default function Game() {
         if (found) return found;
       }
     } catch {}
-    return (players as any)[pid] || null;
+    return (players)[pid] || null;
   }, [state, room]);
 
   useEffect(() => {
-    if (me && me.config) {
+    if (me?.config) {
       setConfig((c: any) => ({
         ...c,
         radius: typeof me.config.radius === 'number' ? me.config.radius : c.radius,
@@ -167,7 +170,7 @@ export default function Game() {
         color: me.config.color ? { r: me.config.color.r, g: me.config.color.g, b: me.config.color.b } : c.color,
       }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [me?.config?.radius, me?.config?.density, me?.config?.friction, me?.config?.restitution, me?.config?.color?.r, me?.config?.color?.g, me?.config?.color?.b]);
 
   // Points UI helpers
@@ -178,7 +181,7 @@ export default function Game() {
   const pointsLeft = TOTAL_POINTS - usedPoints;
   const setAllocClamped = (key: 'density' | 'friction' | 'restitution' | 'radius', value: number) => {
     // clamp to [-MAX_PER_STAT, MAX_PER_STAT] integer
-    let v = Math.max(-MAX_PER_STAT, Math.min(MAX_PER_STAT, Math.round(value)));
+    const v = Math.max(-MAX_PER_STAT, Math.min(MAX_PER_STAT, Math.round(value)));
     setAlloc((prev) => {
       const next = { ...prev, [key]: v } as typeof prev;
       let used = Math.abs(next.density) + Math.abs(next.friction) + Math.abs(next.restitution) + Math.abs(next.radius);
@@ -204,8 +207,8 @@ export default function Game() {
   };
   // Map signed delta in [-MAX..MAX] to numeric value around default, with mild ease
   const mapDelta = (key: 'density' | 'friction' | 'restitution' | 'radius', delta: number): number => {
-    const ranges = (state as any)?.ranges || defaultClampRanges;
-    const r = (ranges as any)[key];
+    const ranges = (state)?.ranges || defaultClampRanges;
+    const r = (ranges)[key];
     const base = (r && typeof r.min === 'number' && typeof r.max === 'number')
       ? (r.min + r.max) / 2
       : (defaultMarbleConfig as any)[key];
@@ -234,13 +237,13 @@ export default function Game() {
   // Gather other players' colors
   const otherColors = useMemo(() => {
     const meId = playerKeyRef.current;
-    const arr: Array<{ r:number; g:number; b:number }> = [];
+    const arr: { r:number; g:number; b:number }[] = [];
     try {
-      const players: any = (state as any)?.players;
+      const players: any = (state)?.players;
       if (players && typeof players.forEach === 'function') {
         players.forEach((p: any) => { if (p && p.id !== meId) arr.push({ r: p.config?.color?.r|0, g: p.config?.color?.g|0, b: p.config?.color?.b|0 }); });
       } else {
-        Object.values((state as any)?.players || {}).forEach((p: any) => { if (p && p.id !== meId) arr.push({ r: p.config?.color?.r|0, g: p.config?.color?.g|0, b: p.config?.color?.b|0 }); });
+        Object.values((state)?.players || {}).forEach((p: any) => { if (p && p.id !== meId) arr.push({ r: p.config?.color?.r|0, g: p.config?.color?.g|0, b: p.config?.color?.b|0 }); });
       }
     } catch {}
     return arr;
@@ -270,7 +273,7 @@ export default function Game() {
   }, [otherColors, config.color.r, config.color.g, config.color.b]);
 
   const generateSuggestions = useMemo(() => (n = 5) => {
-    const res: Array<{ r:number; g:number; b:number }> = [];
+    const res: { r:number; g:number; b:number }[] = [];
     let attempts = 0;
     while (res.length < n && attempts < 200) {
       attempts++;
@@ -299,8 +302,8 @@ export default function Game() {
   const locked = !canConfigure;
 
   const stageIdx = typeof state?.stageIndex === 'number' ? state.stageIndex : -1;
-  const myStagePoints = (me as any)?.results?.[stageIdx]?.points ?? 0;
-  const myTotal = (me as any)?.totalPoints ?? 0;
+  const myStagePoints = (me)?.results?.[stageIdx]?.points ?? 0;
+  const myTotal = (me)?.totalPoints ?? 0;
   const currentStageName = stageIdx >= 0 ? (state?.stages?.[stageIdx]?.name || state?.stages?.[stageIdx]?.id) : '-';
   // Score FX when total increases
   const [scoreFx, setScoreFx] = useState(false);
@@ -322,7 +325,7 @@ export default function Game() {
 
   const playersArr = useMemo(() => {
     const out: any[] = [];
-    const players: any = (state as any)?.players;
+    const players: any = (state)?.players;
     if (!players) return out;
     try {
       if (typeof players.forEach === 'function') {
@@ -340,8 +343,8 @@ export default function Game() {
   // Compute my rank (standing) using same tie-breaks as dashboard
   const myRank = useMemo(() => {
     try {
-      const arr: Array<{ id: string; name: string; total: number; best: number; earliest: number }> = [];
-      const players: any = (state as any)?.players;
+      const arr: { id: string; name: string; total: number; best: number; earliest: number }[] = [];
+      const players: any = (state)?.players;
       const each = (fn: (p: any) => void) => {
         if (players && typeof players.forEach === 'function') { players.forEach(fn); }
         else { Object.values(players || {}).forEach((p: any) => fn(p)); }
@@ -363,7 +366,7 @@ export default function Game() {
     } catch { return 0; }
   }, [state, me?.id]);
 
-  const isSynced = !!(me && me.config && me.config.color &&
+  const isSynced = !!(me?.config?.color &&
     eq(me.config.radius, config.radius) &&
     eq(me.config.density, config.density) &&
     eq(me.config.friction, config.friction) &&
@@ -643,15 +646,15 @@ export default function Game() {
                       }
                     }));
                   }}
-                  style={{ border: ((state as any)?.enforceUniqueColors && hasColorConflict) ? '3px solid #f66' : '3px solid #333' }}
+                  style={{ border: ((state)?.enforceUniqueColors && hasColorConflict) ? '3px solid #f66' : '3px solid #333' }}
                 />
                 <span title="Your marble" style={{ width: 18, height: 18, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: colorHex }} />
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <Button onClick={join} disabled={!!(state as any)?.enforceUniqueColors && hasColorConflict}>Join</Button>
+                <Button onClick={join} disabled={!!(state)?.enforceUniqueColors && hasColorConflict}>Join</Button>
                 {!inLobby && inRunning && <span style={{ color: '#9df' }}>You’ll join the next stage.</span>}
                 {!inLobby && inCountdown && <span style={{ color: '#9df' }}>Spawn is still open—be quick!</span>}
-                {!!(state as any)?.enforceUniqueColors && hasColorConflict && (
+                {!!(state)?.enforceUniqueColors && hasColorConflict && (
                   <span style={{ color: '#f66' }}>Pick a distinct color to join</span>
                 )}
               </div>
@@ -696,7 +699,7 @@ export default function Game() {
                           }));
                           setHasInteracted(true);
                         }}
-                        style={{ width: 48, height: 32, border: ((state as any)?.enforceUniqueColors && hasColorConflict) ? '3px solid #f66' : '3px solid #333', background: '#14161b' }}
+                        style={{ width: 48, height: 32, border: ((state)?.enforceUniqueColors && hasColorConflict) ? '3px solid #f66' : '3px solid #333', background: '#14161b' }}
                       />
                       <div className="ux-swatches">
                         {['#ff4d4d','#ffb84d','#ffe84d','#66ff66','#66ccff','#cc99ff','#ffffff'].map((hex) => (
@@ -718,8 +721,8 @@ export default function Game() {
                       }}>Suggest Unique</Button>
                     </div>
                     {(hasColorConflict || colorDenied) && (
-                      <div style={{ marginTop: 8, color: (state as any)?.enforceUniqueColors ? '#f66' : '#fc6', fontWeight: 700 }}>
-                        {colorDenied || ((state as any)?.enforceUniqueColors ? 'Color too similar — pick a distinct one.' : 'Color is similar — consider changing.')}
+                      <div style={{ marginTop: 8, color: (state)?.enforceUniqueColors ? '#f66' : '#fc6', fontWeight: 700 }}>
+                        {colorDenied || ((state)?.enforceUniqueColors ? 'Color too similar — pick a distinct one.' : 'Color is similar — consider changing.')}
                         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
                           {suggestions.map((c, i) => {
                             const hx = `#${(c.r|0).toString(16).padStart(2,'0')}${(c.g|0).toString(16).padStart(2,'0')}${(c.b|0).toString(16).padStart(2,'0')}`;
@@ -787,9 +790,9 @@ export default function Game() {
                         setAlloc({ density: 0, friction: 0, restitution: 0, radius: 0 });
                         setHasInteracted(false);
                       }}>Reset</Button>
-                      <Button onClick={() => room?.send('spawn')} disabled={me?.spawned || ((state as any)?.enforceUniqueColors && hasColorConflict)}>Spawn</Button>
+                      <Button onClick={() => room?.send('spawn')} disabled={me?.spawned || ((state)?.enforceUniqueColors && hasColorConflict)}>Spawn</Button>
                       {me?.spawned && <span style={{ color: '#9df' }}>Spawned ✓</span>}
-                      {(!(me?.spawned) && (state as any)?.enforceUniqueColors && hasColorConflict) && <span style={{ color: '#f66' }}>Pick a distinct color to spawn</span>}
+                      {(!(me?.spawned) && (state)?.enforceUniqueColors && hasColorConflict) && <span style={{ color: '#f66' }}>Pick a distinct color to spawn</span>}
                     </div>
                   </div>
                 </div>
@@ -826,7 +829,7 @@ export default function Game() {
           {state?.stagePhase === 'stage_finished' && (
             <Panel title="Stage Results">
               <ol style={{ margin: 0, paddingLeft: 18 }}>
-                {Object.values((state?.players as any) || {})
+                {Object.values((state?.players) || {})
                   .map((p: any) => ({ name: p?.name, res: p?.results?.[state.stageIndex] }))
                   .filter((r: any) => r.res && (r.res.placement || r.res.placement === 0))
                   .sort((a: any, b: any) => (a.res.placement || 9999) - (b.res.placement || 9999))
@@ -872,7 +875,7 @@ export default function Game() {
 }
 
 function CheerPanel({ room, me, state, cheerEdit, setCheerEdit, cheers, setCheers, forceCheerUi, lastCheerSentAtRef }:
-  { room: any; me: any; state: any; cheerEdit: boolean; setCheerEdit: (v: boolean) => void; cheers: Array<{ icon: string; text: string }>; setCheers: React.Dispatch<React.SetStateAction<Array<{ icon: string; text: string }>>>; forceCheerUi: React.MutableRefObject<number>; lastCheerSentAtRef: React.MutableRefObject<number>; }) {
+  { room: any; me: any; state: any; cheerEdit: boolean; setCheerEdit: (v: boolean) => void; cheers: { icon: string; text: string }[]; setCheers: React.Dispatch<React.SetStateAction<{ icon: string; text: string }[]>>; forceCheerUi: React.MutableRefObject<number>; lastCheerSentAtRef: React.MutableRefObject<number>; }) {
   const inRunning = state?.stagePhase === 'running';
   const inPrepCheer = (state?.globalPhase === 'intermission' && state?.stagePhase === 'prep');
   const inCountdown = state?.stagePhase === 'countdown';

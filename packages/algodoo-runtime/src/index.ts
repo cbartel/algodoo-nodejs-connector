@@ -1,15 +1,15 @@
 /** Callbacks invoked by the runtime to signal transport events. */
-export type RuntimeCallbacks = {
+export interface RuntimeCallbacks {
   onAccepted?: (seq: number) => void;
   onAcked?: (seq: number) => void;
   onError?: (msg: string) => void;
   onStatus?: (info: Record<string, unknown>) => void;
-};
+}
 
-type AcceptedMessage = { type: 'accepted'; payload: { seq: number } };
-type AckedMessage = { type: 'acked'; payload: { seq: number } };
-type ErrorMessage = { type: 'error'; payload: { message: string } };
-type StatusMessage = { type: 'status'; payload: Record<string, unknown> };
+interface AcceptedMessage { type: 'accepted'; payload: { seq: number } }
+interface AckedMessage { type: 'acked'; payload: { seq: number } }
+interface ErrorMessage { type: 'error'; payload: { message: string } }
+interface StatusMessage { type: 'status'; payload: Record<string, unknown> }
 type ServerMessage = AcceptedMessage | AckedMessage | ErrorMessage | StatusMessage;
 
 /**

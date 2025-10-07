@@ -1,9 +1,10 @@
-import type { Player, AlgodooCommand, AlgodooEvent } from 'marblerace-protocol';
 import { submitEval, submitEvalAsync, requestClientReset } from "./transport";
 
-export type OrchestratorCallbacks = {
+import type { Player, AlgodooCommand, AlgodooEvent } from 'marblerace-protocol';
+
+export interface OrchestratorCallbacks {
   onEvent: (ev: AlgodooEvent) => void;
-};
+}
 
 /**
  * Orchestrator defines high-level commands sent to Algodoo and serves as the

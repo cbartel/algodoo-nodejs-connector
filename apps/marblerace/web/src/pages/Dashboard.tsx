@@ -33,6 +33,7 @@ export const renderRewardBadge = (pts: number, tier: number, key?: React.Key, co
   );
 };
 import { Panel, Table, Badge, Countdown, QR } from 'marblerace-ui-kit';
+
 import { connectRoom, getServerConfig } from '../lib/colyseus';
 
 export default function Dashboard() {
@@ -41,16 +42,16 @@ export default function Dashboard() {
   const [publicBase, setPublicBase] = useState<string | null>(null);
   const [eventsObs, setEventsObs] = useState<string[]>([]);
   // Reward claim burst system (handles many simultaneous claims)
-  const [claimBursts, setClaimBursts] = useState<Array<{ id: number; pts: number; name: string; color: string; left: number; top: number }>>([]);
+  const [claimBursts, setClaimBursts] = useState<{ id: number; pts: number; name: string; color: string; left: number; top: number }[]>([]);
   const burstIdRef = useRef(1);
   const lastStageRef = useRef<number>(-1);
   const lastStagePointsByPlayerRef = useRef<Record<string, number>>({});
   const nameRefs = useRef<Record<string, HTMLElement | null>>({});
   const standingsRef = useRef<HTMLDivElement | null>(null);
-  const [rowHighlights, setRowHighlights] = useState<Array<{ id: number; left: number; top: number; width: number; height: number; color: string }>>([]);
-  const [cheerFx, setCheerFx] = useState<Array<{ id: number; icon: string; text: string; color: string; left: number; top: number; playerName: string }>>([]);
+  const [rowHighlights, setRowHighlights] = useState<{ id: number; left: number; top: number; width: number; height: number; color: string }[]>([]);
+  const [cheerFx, setCheerFx] = useState<{ id: number; icon: string; text: string; color: string; left: number; top: number; playerName: string }[]>([]);
   const seenCheerIdsRef = useRef<Set<number>>(new Set());
-  const s: any = room?.state as any;
+  const s: any = room?.state;
 
   // Prevent page scroll; keep dashboard within one viewport
   useEffect(() => {
@@ -72,11 +73,11 @@ export default function Dashboard() {
       setRoom(r);
       // ticker now carries formatted strings; no special number handling required
       const applyFromState = () => {
-        const sAny: any = r.state as any;
+        const sAny: any = r.state;
         const t: any = sAny?.ticker;
         const acc: string[] = [];
         try {
-          const n = Number((t && t.length) || 0);
+          const n = Number((t?.length) || 0);
           for (let i = 0; i < n; i++) {
             const it: any = t[i];
             acc.push(String(it));
@@ -90,9 +91,9 @@ export default function Dashboard() {
         applyFromState();
         // Fallback: scan cheers for any not yet animated
         try {
-          const cheers: any = (r.state as any)?.cheers;
+          const cheers: any = (r.state)?.cheers;
           const set = seenCheerIdsRef.current;
-          const n = Number((cheers && cheers.length) || 0);
+          const n = Number((cheers?.length) || 0);
           for (let i = Math.max(0, n - 5); i < n; i++) {
             const it: any = cheers[i];
             const id = Number(it?.id || 0);
@@ -104,13 +105,13 @@ export default function Dashboard() {
       });
       // Also bind ArraySchema signals directly for snappier updates
       try {
-        const t: any = (r.state as any)?.ticker;
+        const t: any = (r.state)?.ticker;
         if (t) {
           t.onAdd = (_it: any, _index: number) => applyFromState();
           t.onRemove = (_it: any, _index: number) => applyFromState();
           t.onChange = (_it: any, _index: number) => applyFromState();
         }
-        const cheers: any = (r.state as any)?.cheers;
+        const cheers: any = (r.state)?.cheers;
         if (cheers) {
           cheers.onAdd = (it: any, _idx: number) => spawnCheer(it);
         }
@@ -122,11 +123,11 @@ export default function Dashboard() {
       if (!r2) return;
       setRoom(r2);
       const applyFromState = () => {
-        const sAny: any = r2.state as any;
+        const sAny: any = r2.state;
         const t: any = sAny?.ticker;
         const acc: string[] = [];
         try {
-          const n = Number((t && t.length) || 0);
+          const n = Number((t?.length) || 0);
           for (let i = 0; i < n; i++) {
             const it: any = t[i];
             acc.push(String(it));
@@ -139,9 +140,9 @@ export default function Dashboard() {
       r2.onStateChange((newState: any) => {
         applyFromState();
         try {
-          const cheers: any = (r2.state as any)?.cheers;
+          const cheers: any = (r2.state)?.cheers;
           const set = seenCheerIdsRef.current;
-          const n = Number((cheers && cheers.length) || 0);
+          const n = Number((cheers?.length) || 0);
           for (let i = Math.max(0, n - 5); i < n; i++) {
             const it: any = cheers[i];
             const id = Number(it?.id || 0);
@@ -151,13 +152,13 @@ export default function Dashboard() {
         } catch {}
       });
       try {
-        const t: any = (r2.state as any)?.ticker;
+        const t: any = (r2.state)?.ticker;
         if (t) {
           t.onAdd = (_it: any, _index: number) => applyFromState();
           t.onRemove = (_it: any, _index: number) => applyFromState();
           t.onChange = (_it: any, _index: number) => applyFromState();
         }
-        const cheers: any = (r2.state as any)?.cheers;
+        const cheers: any = (r2.state)?.cheers;
         if (cheers) {
           cheers.onAdd = (it: any, _idx: number) => spawnCheer(it);
         }
@@ -217,7 +218,7 @@ export default function Dashboard() {
       return;
     }
     // Compare and emit bursts for increases
-    const newly: Array<{ id: number; pts: number; name: string; color: string; left: number; top: number }> = [];
+    const newly: { id: number; pts: number; name: string; color: string; left: number; top: number }[] = [];
     try {
       const players = s?.players;
       const each = (fn: (p: any) => void) => {
@@ -448,7 +449,7 @@ export default function Dashboard() {
 
   // Compute Top 3 scorers for the current stage (by stage points desc)
   const top3 = useMemo(() => {
-    if (!s) return [] as Array<{ id: string; name: string; placement: number; points: number; colorHex: string }>;
+    if (!s) return [] as { id: string; name: string; placement: number; points: number; colorHex: string }[];
     const idx = typeof s?.stageIndex === 'number' ? s.stageIndex : -1;
     const arr: any[] = [];
     const players = s?.players;
@@ -479,10 +480,10 @@ export default function Dashboard() {
 
   // Compute current stage reward pool and remaining unclaimed rewards as badges
   const rewards = useMemo(() => {
-    if (!s) return { pool: [] as Array<{ points: number; tier: number }>, remaining: [] as Array<{ points: number; tier: number }>, claimedCount: 0 };
+    if (!s) return { pool: [] as { points: number; tier: number }[], remaining: [] as { points: number; tier: number }[], claimedCount: 0 };
     // Flatten tiered config (preferred) or legacy per-placement table
-    const pool: Array<{ points: number; tier: number }> = [];
-    const ptsTiers: any = (s as any)?.pointsTiers;
+    const pool: { points: number; tier: number }[] = [];
+    const ptsTiers: any = (s)?.pointsTiers;
     if (ptsTiers && (typeof ptsTiers.forEach === 'function' || typeof ptsTiers.length === 'number')) {
       // Use configured order (no resort) so removal aligns with placements
       const each = (fn: (t: any, i: number) => void) => {
@@ -500,7 +501,7 @@ export default function Dashboard() {
         for (let k = 0; k < count; k++) pool.push({ points: pts, tier: i });
       });
     } else {
-      const table: any = (s as any)?.pointsTable;
+      const table: any = (s)?.pointsTable;
       if (table && (typeof table.forEach === 'function' || typeof table.length === 'number')) {
         if (typeof table.forEach === 'function') {
           let i = 0;
@@ -846,7 +847,7 @@ export default function Dashboard() {
       {(() => {
         const idx = typeof s?.stageIndex === 'number' ? s.stageIndex : -1;
         const stageName = idx >= 0 ? (s?.stages?.[idx]?.name || s?.stages?.[idx]?.id) : '-';
-        const playlistId = String((s as any)?.spotifyPlaylistId || '').trim();
+        const playlistId = String((s)?.spotifyPlaylistId || '').trim();
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 420px', gap: 12, alignItems: 'stretch', height: 'calc(100vh - 32px)' }}>
             {/* Live Preview (16:10) */}
@@ -1085,7 +1086,7 @@ function posForCheer(id: any, rMin: number, rMax: number): { x: number; y: numbe
 
 // Reusable boosted cheer layer used by overlays
 function BoostedCheerLayer({ items, rMin, rMax, animation, keyPrefix, chipBg = '#0b0f15', saturate = 1.5 }: {
-  items: Array<{ id: number; icon: string; text: string; color: string; playerName: string }>;
+  items: { id: number; icon: string; text: string; color: string; playerName: string }[];
   rMin: number;
   rMax: number;
   animation: string;
@@ -1171,7 +1172,7 @@ function TickerLatest({ line, players, width = 420, height = 152 }: { line: stri
   } as any;
   if (!line) return <div style={boxStyle} />;
   // Parse "[time] kind: msg"
-  const m = line.match(/^\[(.*?)\]\s*(\w+)(?::\s*(.*))?$/);
+  const m = /^\[(.*?)\]\s*(\w+)(?::\s*(.*))?$/.exec(line);
   const time = m?.[1] || '';
   const kind = (m?.[2] || '').toLowerCase();
   const msg = m?.[3] || '';
@@ -1209,7 +1210,7 @@ function iconForKind(kind: string): string {
   }
 }
 
-function RewardsCompact({ pool, remaining }: { pool: Array<{ points: number; tier: number }>; remaining: Array<{ points: number; tier: number }> }) {
+function RewardsCompact({ pool, remaining }: { pool: { points: number; tier: number }[]; remaining: { points: number; tier: number }[] }) {
   const outerRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
   const badgesRef = useRef<HTMLDivElement | null>(null);

@@ -12,6 +12,20 @@ communicate with an Algodoo instance.
 - **algodoo-runtime** – small runtime library for browsers or Node.js
   environments.
 
+## Docs
+
+- Documentation home: [docs/README.md](./docs/README.md)
+- Marble Race quick start: [docs/marblerace/quick-start.md](./docs/marblerace/quick-start.md)
+- Marble Race advanced setup: [docs/marblerace/advanced-setup.md](./docs/marblerace/advanced-setup.md)
+- Algodoo client bridge: [docs/algodoo-client.md](./docs/algodoo-client.md)
+
+## Apps
+
+- **Marble Race** – Full Algodoo + Colyseus game with web UIs.
+  - Run: `pnpm run marblerace` (builds all then starts on `http://localhost:8080`).
+  - Docs: see [docs/marblerace/README.md](./docs/marblerace/README.md)
+  - Remember to run the file bridge: from the directory with `input.txt`/`ack.txt`/`output.txt` (or via envs), run `node packages/algodoo-client/dist/index.js`.
+
 ## Building and Testing
 
 ```
@@ -38,6 +52,17 @@ pnpm --filter algodoo-example start
 
 The plugin registers a HTTP path and serves a small React UI at
 `http://localhost:8080/cmd`.
+
+For the Marble Race app (recommended demo), use the dedicated starter:
+
+```
+pnpm -r build
+pnpm run marblerace
+# UIs:
+#   http://localhost:8080/admin
+#   http://localhost:8080/game
+#   http://localhost:8080/dashboard
+```
 
 Programmatic usage:
 

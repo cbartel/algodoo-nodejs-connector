@@ -1,0 +1,10 @@
+node_modules/
+**/dist/
+**/build/
+**/.vite/
+**/.tsup/
+**/coverage/
+apps/marblerace/web/dist/
+.pnp.*
+*.log
+pnpm-lock.yaml

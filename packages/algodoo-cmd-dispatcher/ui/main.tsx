@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 function App() {
   const [input, setInput] = useState('');
-  const [outputs, setOutputs] = useState<Array<{seq:number; cmd:string; params:unknown[]}>>([]);
+  const [outputs, setOutputs] = useState<{seq:number; cmd:string; params:unknown[]}[]>([]);
   const ws = useMemo(() => new WebSocket(`ws://${location.host}/_ws`), []);
 
   useEffect(() => {

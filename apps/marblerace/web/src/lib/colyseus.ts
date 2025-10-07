@@ -1,6 +1,6 @@
 import { protocolVersion } from 'marblerace-protocol';
 
-type MRRoom = {
+interface MRRoom {
   state: any;
   onStateChange(cb: (state: any) => void): void;
   onMessage(type: string, cb: (message: any) => void): void;
@@ -8,7 +8,7 @@ type MRRoom = {
   onLeave(cb: (code: number) => void): void;
   send(type: string, payload?: any): void;
   reconnectionToken?: string;
-};
+}
 
 const MR_PLAYER_KEY = 'mr_player_key';
 const MR_RECON_TOKEN = 'mr_recon_token';

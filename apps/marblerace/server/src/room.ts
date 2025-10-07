@@ -1,26 +1,30 @@
-import { Room, Client } from 'colyseus';
+import { Room } from 'colyseus';
 import {
   protocolVersion,
-  StageConfig,
   defaultMarbleConfig,
   clamp,
   clamp01,
-  StagePhase,
   defaultPointsTable,
   comparePlayers,
-  AlgodooEvent,
   type MarbleConfig,
   clampRanges,
 } from 'marblerace-protocol';
+
 import { Orchestrator } from './orchestrator.js';
-import { requestClientScanScenes } from './transport.js';
 import { getLastScenes } from './scenes-cache.js';
 import { RaceStateSchema, PlayerSchema, StageSchema, ResultSchema, PointsTierSchema, CheerSchema } from './schema.js';
+import { requestClientScanScenes } from './transport.js';
 
-type ClientData = {
+import type { Client } from 'colyseus';
+import type {
+  StageConfig,
+  StagePhase,
+  AlgodooEvent} from 'marblerace-protocol';
+
+interface ClientData {
   isAdmin?: boolean;
   playerId?: string;
-};
+}
 
 const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:room]', ...args);
@@ -46,7 +50,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
   private prepTimer?: NodeJS.Timeout;
   private postStageTimer?: NodeJS.Timeout;
   private finishOrder: string[] = []; // playerIds per stage
-  private lastCheerAt: Map<string, number> = new Map();
+  private lastCheerAt = new Map<string, number>();
 
   // Simple admin guard via env token
   // Default aligns with README; empty string disables auth (not recommended)
@@ -206,10 +210,10 @@ export class RaceRoom extends Room<RaceStateSchema> {
       // Dynamic clamp using current state ranges
       const r = this.state.ranges;
       const next: any = { ...src };
-      if (apply.radius != null) next.radius = clamp(apply.radius as number, r.radius.min, r.radius.max);
-      if (apply.density != null) next.density = clamp(apply.density as number, r.density.min, r.density.max);
-      if (apply.friction != null) next.friction = clamp(apply.friction as number, r.friction.min, r.friction.max);
-      if (apply.restitution != null) next.restitution = clamp(apply.restitution as number, r.restitution.min, r.restitution.max);
+      if (apply.radius != null) next.radius = clamp(apply.radius, r.radius.min, r.radius.max);
+      if (apply.density != null) next.density = clamp(apply.density, r.density.min, r.density.max);
+      if (apply.friction != null) next.friction = clamp(apply.friction, r.friction.min, r.friction.max);
+      if (apply.restitution != null) next.restitution = clamp(apply.restitution, r.restitution.min, r.restitution.max);
       if (apply.color) {
         next.color = { r: Math.max(0, Math.min(255, apply.color.r|0)), g: Math.max(0, Math.min(255, apply.color.g|0)), b: Math.max(0, Math.min(255, apply.color.b|0)) };
       }
@@ -351,8 +355,8 @@ export class RaceRoom extends Room<RaceStateSchema> {
           let id = '';
           if (raw) {
             // Accept full URLs, URIs, or plain IDs
-            const m1 = raw.match(/playlist\/(\w{10,})/i);
-            const m2 = raw.match(/spotify:playlist:([A-Za-z0-9]{10,})/i);
+            const m1 = /playlist\/(\w{10,})/i.exec(raw);
+            const m2 = /spotify:playlist:([A-Za-z0-9]{10,})/i.exec(raw);
             if (m1) id = m1[1];
             else if (m2) id = m2[1];
             else if (/^[A-Za-z0-9]+$/.test(raw)) id = raw; // base62 id
@@ -384,7 +388,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
         }
         case 'setClampRanges': {
           // Allow editing ranges any time; server clamps player updates accordingly
-          const dataAny = (data || {}) as any;
+          const dataAny = (data || {});
           const toPair = (v: any, defMin: number, defMax: number, hardMin: number, hardMax: number) => {
             const min = Number(v?.min);
             const max = Number(v?.max);
@@ -567,10 +571,10 @@ export class RaceRoom extends Room<RaceStateSchema> {
     // keep current perStageTimeoutMs; not set from admin
     // points table (legacy) or tiers (new)
     this.state.pointsTable.splice(0, this.state.pointsTable.length);
-    (data.pointsTable && data.pointsTable.length ? data.pointsTable : defaultPointsTable).forEach((n) => this.state.pointsTable.push(n));
+    (data.pointsTable?.length ? data.pointsTable : defaultPointsTable).forEach((n) => this.state.pointsTable.push(n));
     // tiers
     (this.state as any).pointsTiers?.splice?.(0, (this.state as any).pointsTiers.length ?? 0);
-    const tiers = Array.isArray((data as any)?.tiers) ? (data as any).tiers as Array<{ count: number; points: number }> : [];
+    const tiers = Array.isArray((data as any)?.tiers) ? (data as any).tiers as { count: number; points: number }[] : [];
     for (const t of tiers) {
       const tier = new PointsTierSchema();
       tier.count = Math.max(0, Math.min(1000, Number(t?.count ?? 0)) | 0);
@@ -762,7 +766,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
 
   private async spawnAnyUnspawned() {
     try {
-      const toSpawn: Array<{ id: string; name: string; config: { radius: number; density: number; friction: number; restitution: number; color: { r: number; g: number; b: number } } }> = [];
+      const toSpawn: { id: string; name: string; config: { radius: number; density: number; friction: number; restitution: number; color: { r: number; g: number; b: number } } }[] = [];
       this.state.players.forEach((p) => {
         if (!p.spawned) {
           toSpawn.push({
@@ -911,7 +915,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
   private pointsForPlacement(placement: number): number {
     if (placement <= 0) return 0;
     // Prefer tiered config if present
-    let idx = placement;
+    const idx = placement;
     const ptsTiers: any[] = (this.state as any).pointsTiers || [];
     if (ptsTiers.length > 0) {
       for (let i = 0, acc = 0; i < ptsTiers.length; i++) {

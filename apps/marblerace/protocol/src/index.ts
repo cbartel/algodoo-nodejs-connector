@@ -9,11 +9,11 @@ export const protocolVersion = '0.1.0';
 /**
  * Minimal client handshake payload exchanged on connection.
  */
-export type Handshake = {
+export interface Handshake {
   protocolVersion: string;
   roomId?: string;
   playerKey?: string; // stable client identity for reconnection
-};
+}
 
 /** Global race phase values. */
 export type RacePhase = 'lobby' | 'countdown' | 'running' | 'finished';
@@ -21,13 +21,13 @@ export type RacePhase = 'lobby' | 'countdown' | 'running' | 'finished';
 export type StagePhase = 'loading' | 'prep' | 'countdown' | 'running' | 'stage_finished';
 
 /** Clamp ranges for marble parameters (server remains authoritative). */
-export type ClampRange = { min: number; max: number };
-export type ClampRanges = {
+export interface ClampRange { min: number; max: number }
+export interface ClampRanges {
   radius: ClampRange;
   density: ClampRange;
   friction: ClampRange;
   restitution: ClampRange;
-};
+}
 
 export const clampRanges: ClampRanges = {
   // Adjusted defaults (meters)
@@ -38,7 +38,7 @@ export const clampRanges: ClampRanges = {
 };
 
 /** Simple 0..255 RGB color. */
-export type RGB = { r: number; g: number; b: number };
+export interface RGB { r: number; g: number; b: number }
 
 /** Clamp a number into [0,1]. */
 export function clamp01(n: number) {
@@ -55,13 +55,13 @@ export function isValidRGB(c: RGB): boolean {
   return [c.r, c.g, c.b].every((v) => Number.isFinite(v) && v >= 0 && v <= 255);
 }
 
-export type MarbleConfig = {
+export interface MarbleConfig {
   radius: number;
   density: number;
   friction: number;
   restitution: number;
   color: RGB;
-};
+}
 
 export type PartialMarbleConfig = Partial<MarbleConfig>;
 
@@ -97,24 +97,24 @@ export const defaultPointsTable: PointsTable = [25, 18, 15, 12, 10, 8, 6, 4, 2, 
 // New tiered points configuration: apply in order; e.g.
 // [{ count: 3, points: 10 }, { count: 5, points: 7 }, { count: 2, points: 5 }]
 // → placements 1..3 get 10; 4..8 get 7; 9..10 get 5; others 0.
-export type PointsTier = { count: number; points: number };
+export interface PointsTier { count: number; points: number }
 export type PointsConfig = PointsTier[];
 
 /**
  * Stage configuration referenced in race setup.
  */
-export type StageConfig = {
+export interface StageConfig {
   id: string; // maps to Algodoo scene identifier
   name?: string;
   // Optional number of times to run this stage consecutively during the race setup.
   // Server may expand this into repeated entries; default is 1.
   repeats?: number;
-};
+}
 
 export type PlayerId = string;
 
 /** Player snapshot tracked server-side and exposed to clients. */
-export type Player = {
+export interface Player {
   id: PlayerId;
   name: string;
   config: MarbleConfig;
@@ -123,18 +123,18 @@ export type Player = {
   bestPlacement: number | null; // lowest number is best (1 means 1st)
   earliestBestStageIndex: number | null; // where bestPlacement occurred first
   // Per-stage results by stage index
-  results: Array<StageResult | undefined>;
-};
+  results: (StageResult | undefined)[];
+}
 
-export type StageResult = {
+export interface StageResult {
   stageIndex: number;
   placement?: number; // 1-based finishing order; undefined => DNF
   points: number; // awarded for this stage
   finishedAt?: number; // ms timestamp for auditing
-};
+}
 
 /** Overall race state managed by Colyseus room and consumed by clients. */
-export type RaceState = {
+export interface RaceState {
   protocolVersion: string;
   globalPhase: RacePhase;
   stages: StageConfig[];
@@ -150,7 +150,7 @@ export type RaceState = {
   ticker: string[];
   countdownMsRemaining?: number; // for countdown phases
   roomId?: string; // exposed to clients for QR deep-link
-};
+}
 
 // Client/player messages
 /** Messages allowed from client/player. */
@@ -183,7 +183,7 @@ export type AnyIncoming = ClientMsg | AdminMsg;
 /** Outgoing commands to Algodoo runtime. */
 export type AlgodooCommand =
   | { type: 'loadStage'; payload: { stageId: string } }
-  | { type: 'spawnMarbles'; payload: { players: Array<{ id: PlayerId; name: string; config: MarbleConfig }> } }
+  | { type: 'spawnMarbles'; payload: { players: { id: PlayerId; name: string; config: MarbleConfig }[] } }
   | { type: 'countdown'; payload: { seconds: number } }
   | { type: 'go' }
   | { type: 'resetStage' };

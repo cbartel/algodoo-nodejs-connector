@@ -1,15 +1,20 @@
-import path from 'path';
-import fs from 'fs';
-import type { IncomingMessage, ServerResponse } from 'http';
-import http from 'http';
-import type { ServerPlugin, PluginContext, ClientMessage } from 'algodoo-server';
-import { Server as ColyseusServer } from 'colyseus';
+
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+
+
 import { WebSocketTransport } from '@colyseus/ws-transport';
-import { RaceRoom, updateClientAlive, updateScenes, dispatchAlgodooEvent } from './room';
-import { wireTransport, submitPingAsync, requestClientScanScenes } from './transport';
-import { setLastScenes } from './scenes-cache';
+import { Server as ColyseusServer } from 'colyseus';
+
 import { contentTypeFor, safeJoin, extractHostname, isLocalhost, pickLocalIPv4 } from './http-utils';
 import { mapOutputToEvent } from './output-event-mapper';
+import { RaceRoom, updateClientAlive, updateScenes, dispatchAlgodooEvent } from './room';
+import { setLastScenes } from './scenes-cache';
+import { wireTransport, submitPingAsync, requestClientScanScenes } from './transport';
+
+import type { ServerPlugin, PluginContext, ClientMessage } from 'algodoo-server';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:plugin]', ...args);
@@ -85,7 +90,7 @@ export const marbleRacePlugin: ServerPlugin = {
     // Start dedicated Colyseus server on separate port to avoid WS conflicts
     const colyPort = Number(process.env.MARBLERACE_COLYSEUS_PORT || 2567);
     const colyHttp = http.createServer((req, res) => {
-      const origin = (req.headers.origin as string) || '*';
+      const origin = (req.headers.origin!) || '*';
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -136,7 +141,7 @@ export const marbleRacePlugin: ServerPlugin = {
     } else if (t === 'output') {
       try {
         const payload: any = (msg as any)?.payload || {};
-        const seq: number = Number(payload.seq ?? -1);
+        const seq = Number(payload.seq ?? -1);
         const cmd: string = String(payload.cmd || '').toLowerCase();
         const p: any[] = Array.isArray(payload.params) ? payload.params : [];
         debug('output raw', { seq, cmd, params: p });
@@ -180,7 +185,7 @@ export const marbleRacePlugin: ServerPlugin = {
           debug('asset 200', path.basename(filePath));
           const ctype = contentTypeFor(filePath);
           // Cache fingerprinted assets aggressively (vite outputs hashed filenames under /assets)
-          const cache = /\/assets\//.test(url) ? 60 * 60 * 24 * 30 : 0;
+          const cache = url.includes('/assets/') ? 60 * 60 * 24 * 30 : 0;
           return sendFile(res, filePath, ctype, cache);
         }
         debug('asset 404', filePath);
@@ -201,7 +206,7 @@ export const marbleRacePlugin: ServerPlugin = {
         const xfProto = ((req.headers['x-forwarded-proto'] as string) || '').toLowerCase();
         const scheme = xfProto.includes('https') ? 'https' : 'http';
         const xfHostRaw = (req.headers['x-forwarded-host'] as string) || '';
-        const headerHostRaw = (req.headers.host as string) || '';
+        const headerHostRaw = (req.headers.host!) || '';
         const first = (s: string) => s ? s.split(',')[0].trim() : '';
         const envPublicHost = (process.env.MARBLERACE_PUBLIC_HOST || '').trim();
         const envPublicFullUrl = (process.env.MARBLERACE_PUBLIC_URL || '').trim();

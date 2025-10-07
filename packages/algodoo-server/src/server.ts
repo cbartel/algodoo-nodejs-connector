@@ -1,5 +1,6 @@
+import http from 'node:http';
+
 import { WebSocketServer, WebSocket } from 'ws';
-import http from 'http';
 /**
  * Minimal pluggable WebSocket + HTTP server used by Algodoo integrations.
  * Provides a queueing transport for Thyme `EVAL` commands and a plugin hook
@@ -68,7 +69,7 @@ const SRV_LOG = process.env.ALGODOO_SERVER_LOG || 'info';
 const srvDebug = (...args: unknown[]) => { if (SRV_LOG === 'debug') console.log('[algodoo-server]', ...args); };
 
 // Minimal queue for submitting EVAL to a single algodoo-client connection
-type EnqueueItem = { seq: number; line: string };
+interface EnqueueItem { seq: number; line: string }
 let algodooClient: WebSocket | null = null;
 let inflight: EnqueueItem[] = [];
 let lastAck = -1;
@@ -101,7 +102,7 @@ export function submitEvalAsync(thyme: string, opts: { timeoutMs?: number } = {}
     const reason = res.reason || 'unknown';
     return Promise.reject(new Error(`submitEval failed: ${reason}`));
   }
-  const seq = res.seq as number;
+  const seq = res.seq!;
   if (lastAck >= seq) return Promise.resolve({ seq });
   const timeoutMs = Math.max(1, Number(opts.timeoutMs ?? 10000));
   return new Promise((resolve, reject) => {
@@ -140,7 +141,7 @@ export function submitRawAsync(cmd: string, opts: { timeoutMs?: number } = {}): 
     const reason = res.reason || 'unknown';
     return Promise.reject(new Error(`submitRaw failed: ${reason}`));
   }
-  const seq = res.seq as number;
+  const seq = res.seq!;
   if (lastAck >= seq) return Promise.resolve({ seq });
   const timeoutMs = Math.max(1, Number(opts.timeoutMs ?? 5000));
   return new Promise((resolve, reject) => {

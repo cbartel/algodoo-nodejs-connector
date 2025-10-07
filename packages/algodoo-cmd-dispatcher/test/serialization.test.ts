@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+
 import { serializeParams, SeqCounter } from '../src/index';
 
 describe('serializeParams', () => {

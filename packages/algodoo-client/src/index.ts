@@ -3,10 +3,14 @@
  * with a WebSocket transport. Handles RESET handshakes, state restoration, and
  * scene discovery, enabling Algodoo to process enqueued Thyme commands.
  */
-import {RawData, WebSocket} from 'ws';
-import fs from 'fs/promises';
-import type { Dirent } from 'fs';
-import path from 'path';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+import { WebSocket} from 'ws';
+
+
+import type { Dirent } from 'node:fs';
+import type {RawData} from 'ws';
 
 interface EnqueueMsg {
   seq: number;
@@ -19,12 +23,12 @@ interface EnqueueMessage {
 }
 
 type ServerMessage = EnqueueMessage;
-type ResetMessage = { type: 'reset' };
-type ScanScenesMessage = { type: 'scan.scenes' };
+interface ResetMessage { type: 'reset' }
+interface ScanScenesMessage { type: 'scan.scenes' }
 type IncomingServerMessage = ServerMessage | ResetMessage | ScanScenesMessage;
-type ClientHello = { type: 'client.hello'; payload?: { version?: string } };
-type ClientAlive = { type: 'client.alive'; payload: { ts: number } };
-type ClientScenes = { type: 'client.scenes'; payload: { root: string; files: string[] } };
+interface ClientHello { type: 'client.hello'; payload?: { version?: string } }
+interface ClientAlive { type: 'client.alive'; payload: { ts: number } }
+interface ClientScenes { type: 'client.scenes'; payload: { root: string; files: string[] } }
 
 const SERVER_URL = process.env.SERVER_URL || 'ws://localhost:8080/_ws';
 const INPUT_PATH = process.env.INPUT || './input.txt';
@@ -401,7 +405,7 @@ async function scanAndPublishScenes(ws: WebSocket): Promise<void> {
       return;
     }
     for (const ent of entries) {
-      const name = ent.name as string;
+      const name = ent.name;
       const full = dir + '/' + name;
       const relPath = rel ? rel + '/' + name : name;
       if (ent.isDirectory?.()) {

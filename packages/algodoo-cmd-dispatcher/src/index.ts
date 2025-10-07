@@ -1,7 +1,9 @@
+import { createReadStream, existsSync } from 'node:fs';
+import { dirname, join, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { WebSocket } from 'ws';
-import { createReadStream, existsSync } from 'fs';
-import { dirname, join, extname } from 'path';
-import { fileURLToPath } from 'url';
+
 /**
  * algodoo-cmd-dispatcher: a simple ServerPlugin providing a small UI to submit
  * Thyme `EVAL` commands and observe outputs. It brokers between a UI WS client
@@ -13,7 +15,7 @@ import type {
   PluginContext,
   ClientMessage,
 } from 'algodoo-server';
-import type { IncomingMessage, ServerResponse } from 'http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /** Message payload for submitting a Thyme command. */
 export interface SubmitPayload {

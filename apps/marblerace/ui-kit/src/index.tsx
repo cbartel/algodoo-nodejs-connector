@@ -1,5 +1,5 @@
-import React from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
+import React from 'react';
 
 export function PixelProvider({ children }: { children: React.ReactNode }) {
   return (
@@ -16,9 +16,10 @@ const globalCss = `
   a { color: #9df; }
 `;
 
-export function Panel({ title, children }: { title?: string; children: React.ReactNode }) {
+export function Panel({ title, children, style }: { title?: string; children: React.ReactNode; style?: React.CSSProperties }) {
+  const base: React.CSSProperties = { border: '4px solid #6cf', padding: 12, background: '#0f1115', boxShadow: '0 0 0 2px #036 inset' };
   return (
-    <div style={{ border: '4px solid #6cf', padding: 12, background: '#0f1115', boxShadow: '0 0 0 2px #036 inset' }}>
+    <div style={{ ...base, ...(style || {}) }}>
       {title && <div style={{ fontSize: 12, marginBottom: 8, color: '#6cf' }}>{title}</div>}
       {children}
     </div>
@@ -90,4 +91,3 @@ export function QR({ url, size = 128 }: { url: string; size?: number }) {
     </div>
   );
 }
-

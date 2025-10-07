@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Panel, Table, Badge } from 'marblerace-ui-kit';
+import React, { useEffect, useMemo, useState } from 'react';
+
 import { connectRoom } from '../lib/colyseus';
 
 export default function Admin() {
@@ -45,7 +46,7 @@ export default function Admin() {
 
   // Sync local caption draft with server state
   useEffect(() => {
-    setTitleDraft(String((state as any)?.title || 'Marble Race'));
+    setTitleDraft(String((state)?.title || 'Marble Race'));
   }, [state?.title]);
 
   // Poll health for PING roundtrip RTT
@@ -79,7 +80,7 @@ export default function Admin() {
 
   const players = useMemo(() => {
     const out: any[] = [];
-    const p = (state as any)?.players;
+    const p = (state)?.players;
     if (!p) return out;
     try { if (typeof p.forEach === 'function') { p.forEach((v: any) => v && out.push(v)); return out; } } catch {}
     try { if (Array.isArray(p)) return p.filter(Boolean); } catch {}
@@ -88,13 +89,13 @@ export default function Admin() {
   }, [state]);
   const scenes = useMemo(() => {
     const arr: string[] = [];
-    const raw = (state as any)?.scenes;
-    if (raw && typeof (raw as any).forEach === 'function') { (raw as any).forEach((v: any) => arr.push(String(v))); }
+    const raw = (state)?.scenes;
+    if (raw && typeof (raw).forEach === 'function') { (raw).forEach((v: any) => arr.push(String(v))); }
     else if (Array.isArray(raw)) arr.push(...raw.map(String));
     return arr.sort((a, b) => a.localeCompare(b));
   }, [state]);
   const clientAliveAgo = useMemo(() => {
-    const ts = Number((state as any)?.clientLastAliveTs ?? 0);
+    const ts = Number((state)?.clientLastAliveTs ?? 0);
     if (!Number.isFinite(ts) || ts <= 0) return null;
     const diff = Date.now() - ts;
     return Math.round(diff / 1000);
@@ -106,11 +107,11 @@ export default function Admin() {
     room.send('admin', { token: auth, action, data });
   }
 
-  function parseTiers(text: string): Array<{ count: number; points: number }> {
+  function parseTiers(text: string): { count: number; points: number }[] {
     const items = text.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-    const tiers: Array<{ count: number; points: number }> = [];
+    const tiers: { count: number; points: number }[] = [];
     for (const it of items) {
-      const m = it.match(/^(\d+)\s*[xX:\*]\s*(\d+)$/);
+      const m = /^(\d+)\s*[xX:\*]\s*(\d+)$/.exec(it);
       if (!m) continue;
       const count = parseInt(m[1], 10);
       const points = parseInt(m[2], 10);
@@ -386,7 +387,7 @@ export default function Admin() {
         <div style={{ overflowX: 'auto' }}>
           <Table
             headers={["Name","Spawned","Stage Pts","Total","Radius","Density","Friction","Restitution","Color","Actions"]}
-            rows={(players as any[]).map((p) => {
+            rows={(players).map((p) => {
               const idx = typeof state?.stageIndex === 'number' ? state.stageIndex : -1;
               const pts = (p?.results?.[idx]?.points ?? 0);
               const col = p?.config?.color || { r: 255, g: 255, b: 255 };
@@ -540,12 +541,12 @@ function MultiplierSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: s
 }
 
 function RangesSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
-  type Pair = { min: number; max: number };
+  interface Pair { min: number; max: number }
   const getPair = (p: any, defMin: number, defMax: number): Pair => ({
     min: Number.isFinite(Number(p?.min)) ? Number(p.min) : defMin,
     max: Number.isFinite(Number(p?.max)) ? Number(p.max) : defMax,
   });
-  const s = (state as any) || {};
+  const s = (state) || {};
   const rr = s?.ranges || {};
   const [radius, setRadius] = React.useState<Pair>(getPair(rr?.radius, 0.02, 0.045));
   const [density, setDensity] = React.useState<Pair>(getPair(rr?.density, 0.5, 4.0));
@@ -564,7 +565,7 @@ function RangesSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: strin
   };
   const fmt = (v: number, d: number) => (Number.isFinite(v) ? v.toFixed(d) : '');
   React.useEffect(() => {
-    const rr2 = (state as any)?.ranges || {};
+    const rr2 = (state)?.ranges || {};
     setRadius(getPair(rr2?.radius, 0.02, 0.045));
     setDensity(getPair(rr2?.density, 0.5, 4.0));
     setFriction(getPair(rr2?.friction, 0.0, 1.0));

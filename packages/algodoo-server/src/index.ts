@@ -1,4 +1,6 @@
-import { startServer, ServerPlugin } from './server.js';
+import { startServer } from './server.js';
+
+import type { ServerPlugin } from './server.js';
 /** Entry CLI to start the server with one or more plugins. */
 
 /** Dynamically import plugin modules by path. */
