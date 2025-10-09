@@ -26,6 +26,17 @@ communicate with an Algodoo instance.
   - Docs: see [docs/marblerace/README.md](./docs/marblerace/README.md)
   - Remember to run the file bridge: from the directory with `input.txt`/`ack.txt`/`output.txt` (or via envs), run `node packages/algodoo-client/dist/index.js`.
 
+### Marble Race — Screenshots
+
+<p>
+  <img alt="Admin" src="./docs/marblerace/admin.png" width="45%" style="max-width: 520px; margin-right: 8px;" />
+  <img alt="Dashboard" src="./docs/marblerace/dashboard.png" width="45%" style="max-width: 520px;" />
+</p>
+
+<p>
+  <img alt="Game" src="./docs/marblerace/game.png" width="60%" style="max-width: 720px;" />
+</p>
+
 ## Building and Testing
 
 ```

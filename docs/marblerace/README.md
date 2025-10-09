@@ -33,3 +33,17 @@ Authoritative multi‑stage Marble Race, built as an `algodoo-server` plugin. Ph
 - Orchestrator: [apps/marblerace/server/src/orchestrator.ts](../../apps/marblerace/server/src/orchestrator.ts)
 - Transport: [apps/marblerace/server/src/transport.ts](../../apps/marblerace/server/src/transport.ts)
 - Web entry: [apps/marblerace/web/src/main.tsx](../../apps/marblerace/web/src/main.tsx)
+
+## 📸 Screenshots
+
+Admin
+
+![Admin](./admin.png)
+
+Dashboard
+
+![Dashboard](./dashboard.png)
+
+Game
+
+![Game](./game.png)

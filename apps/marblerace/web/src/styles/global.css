@@ -1,0 +1,35 @@
+/* Global animations and shared effects */
+
+@keyframes neonShift { to { background-position: 200% center } }
+@keyframes neonGlow { 0% { text-shadow: 0 0 8px #069 } 100% { text-shadow: 0 0 18px #0bf } }
+
+@keyframes mrCheerFly {
+  0% { transform: translate(-50%, 0) scale(0.98); opacity: 0.0 }
+  8% { opacity: 1 }
+  60% { transform: translate(-50%, -120px) scale(1.02); opacity: 1 }
+  100% { transform: translate(-50%, -260px) scale(1.04); opacity: 0 }
+}
+
+@keyframes mrTickerScroll {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+
+@keyframes mrFall{0%{transform:translateY(-10px) rotate(0deg)}100%{transform:translateY(120vh) rotate(720deg)}}
+
+@keyframes rowPulse {
+  0%, 100% { opacity: 0.0 }
+  20% { opacity: 0.9 }
+  60% { opacity: 0.5 }
+}
+
+@keyframes burstPop { 0% { transform: scale(.7) } 80% { transform: scale(1.06) } 100% { transform: scale(1) } }
+@keyframes burstFloat { to { transform: translate(-50%,-85%) } }
+@keyframes confFan { 0% { opacity: 0; transform: translate(-50%,-50%) rotate(var(--a,0)) translateX(0) } 10% { opacity: 1 } 100% { opacity: 0; transform: translate(-50%,-50%) rotate(var(--a,0)) translateX(80px) } }
+
+@keyframes toastInOut{
+  0%{opacity:0;transform:translate(-50%,8px) scale(0.98)}
+  10%{opacity:1;transform:translate(-50%,0) scale(1)}
+  90%{opacity:1}
+  100%{opacity:0;transform:translate(-50%,-4px) scale(0.98)}
+}

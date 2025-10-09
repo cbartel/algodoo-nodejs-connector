@@ -252,8 +252,8 @@ export class RaceRoom extends Room<RaceStateSchema> {
       c.color.b = p.config.color.b;
       c.ts = Date.now();
       (this.state.cheers as any).push(c);
-      // Trim to avoid unbounded growth (allow more bursty fun)
-      while (this.state.cheers.length > 200) this.state.cheers.shift();
+      // Trim aggressively to keep state shallow for schema encoding
+      this.pruneCheers(60, 90_000);
     });
 
     // Admin messages
@@ -896,6 +896,21 @@ export class RaceRoom extends Room<RaceStateSchema> {
       }
     };
     this.postStageTimer = setTimeout(tick, 100);
+  }
+
+  // Evict old/overflowing cheer events to keep state small
+  private pruneCheers(max = 60, ttlMs = 90_000) {
+    try {
+      const now = Date.now();
+      // Drop items older than TTL
+      while (this.state.cheers.length > 0) {
+        const first = this.state.cheers[0] as any;
+        if (!first || !first.ts || (now - Number(first.ts || 0)) <= ttlMs) break;
+        this.state.cheers.shift();
+      }
+      // Enforce max size
+      while (this.state.cheers.length > max) this.state.cheers.shift();
+    } catch { /* noop */ }
   }
 
   pushTicker(kind: string, msg: string) {

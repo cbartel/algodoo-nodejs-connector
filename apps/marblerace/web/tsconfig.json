@@ -5,6 +5,7 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "composite": true
+    "composite": false,
+    "declaration": false
   }
 }

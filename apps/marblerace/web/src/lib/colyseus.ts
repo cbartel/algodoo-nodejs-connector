@@ -1,3 +1,4 @@
+/* eslint-env browser */
 import { protocolVersion } from 'marblerace-protocol';
 
 interface MRRoom {
@@ -60,7 +61,7 @@ export async function connectRoom(): Promise<MRRoom> {
     const token = localStorage.getItem(MR_RECON_TOKEN) || undefined;
     let roomAny: any = null;
     if (token) {
-      try { roomAny = await client.reconnect(token); } catch {}
+      try { roomAny = await client.reconnect(token); } catch { void 0; }
     }
     if (!roomAny) {
       roomAny = await client.joinOrCreate('marblerace');
@@ -68,7 +69,7 @@ export async function connectRoom(): Promise<MRRoom> {
     const room = roomAny as MRRoom;
     console.log('[web]', token ? 'reconnected to room' : 'joined new room');
     // Identify ourselves so server can associate stable player
-    try { room.send('handshake', { protocolVersion, playerKey }); } catch {}
+    try { room.send('handshake', { protocolVersion, playerKey }); } catch { void 0; }
     // Persist reconnection token for future reconnects
     const recon = typeof roomAny?.reconnectionToken === 'string' ? (roomAny.reconnectionToken as string) : undefined;
     if (recon) localStorage.setItem(MR_RECON_TOKEN, recon);
@@ -78,7 +79,7 @@ export async function connectRoom(): Promise<MRRoom> {
   function dispatchReconnected(newRoom: MRRoom) {
     try {
       window.dispatchEvent(new CustomEvent('mr:room.reconnected', { detail: { room: newRoom } }));
-    } catch {}
+    } catch { void 0; }
   }
 
   async function attachResilience(r: MRRoom): Promise<MRRoom> {

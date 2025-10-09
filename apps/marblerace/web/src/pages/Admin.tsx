@@ -1,90 +1,53 @@
 import { Button, Panel, Table, Badge } from 'marblerace-ui-kit';
 import React, { useEffect, useMemo, useState } from 'react';
 
-import { connectRoom } from '../lib/colyseus';
+import AdminAutoAdvanceSettings from '../components/admin/AdminAutoAdvanceSettings';
+import AdminCeremonySettings from '../components/admin/AdminCeremonySettings';
+import AdminMultiplierSettings from '../components/admin/AdminMultiplierSettings';
+import AdminMusicSettings from '../components/admin/AdminMusicSettings';
+import AdminPrepSettings from '../components/admin/AdminPrepSettings';
+import AdminRangesSettings from '../components/admin/AdminRangesSettings';
+import { useAdminToken } from '../hooks/useAdminToken';
+import { usePingInfo } from '../hooks/usePingInfo';
+import { useRoom } from '../hooks/useRoom';
+import './Admin.css';
 
 export default function Admin() {
   const [room, setRoom] = useState<any>(null);
-  // Selected scenes + custom names (ordered)
-  // New tiered points configuration, entered as CSV of "count x points" pairs.
   const [tiersText, setTiersText] = useState('3x10,5x7,2x5');
   const [state, setState] = useState<any>(null);
   const [selectedScenes, setSelectedScenes] = useState<string[]>([]);
   const [stageNames, setStageNames] = useState<Record<string, string>>({});
   const [stageRepeats, setStageRepeats] = useState<Record<string, number>>({});
-  const [token, setToken] = useState<string>(() => localStorage.getItem('mr_admin_token') || 'changeme');
-  const [pingInfo, setPingInfo] = useState<{ ok: boolean; rtt: number; age: number } | null>(null);
+  const { token, setToken } = useAdminToken();
+  const pingInfo = usePingInfo();
   const [titleDraft, setTitleDraft] = useState<string>('');
   const titleDebounceRef = React.useRef<any>(null);
-
+  const roomState = useRoom<any>();
   useEffect(() => {
-    connectRoom().then((r) => {
-      setRoom(r);
-      setState(r.state);
-      r.onStateChange((newState: any) => setState({ ...newState }));
+    if (!roomState.room) return;
+    setRoom(roomState.room);
+    setState(roomState.state);
+    const r = roomState.room as any;
+    try {
       r.onMessage('admin.denied', (msg: any) => {
         alert('Admin action denied: ' + (msg?.reason || 'unknown'));
       });
-    });
-  }, []);
+    } catch { void 0; }
+  }, [roomState.room, roomState.state]);
 
-  // Rebind on managed reconnection
-  useEffect(() => {
-    const onReconnected = (ev: any) => {
-      const r2 = ev?.detail?.room;
-      if (!r2) return;
-      setRoom(r2);
-      setState(r2.state);
-      r2.onStateChange((newState: any) => setState({ ...newState }));
-      r2.onMessage('admin.denied', (msg: any) => {
-        alert('Admin action denied: ' + (msg?.reason || 'unknown'));
-      });
-    };
-    window.addEventListener('mr:room.reconnected', onReconnected);
-    return () => window.removeEventListener('mr:room.reconnected', onReconnected);
-  }, []);
-
-  // Sync local caption draft with server state
   useEffect(() => {
     setTitleDraft(String((state)?.title || 'Marble Race'));
   }, [state?.title]);
 
-  // Poll health for PING roundtrip RTT
-  useEffect(() => {
-    let t: any;
-    async function poll() {
-      try {
-        const res = await fetch('/mr/health');
-        const j = await res.json();
-        const last = Number(j?.ping?.lastPingAt || 0);
-        const rtt = Number(j?.ping?.lastPingRtt || -1);
-        const ok = !!j?.ping?.pingOk;
-        const age = last > 0 ? Math.round((Date.now() - last)/1000) : -1;
-        setPingInfo({ ok, rtt, age });
-      } catch {}
-      t = setTimeout(poll, 3000);
-    }
-    poll();
-    return () => t && clearTimeout(t);
-  }, []);
-
-  // Allow passing token via URL, e.g. /admin?token=SECRET
-  useEffect(() => {
-    const qp = new URLSearchParams(window.location.search);
-    const t = qp.get('token');
-    if (t) {
-      setToken(t);
-      localStorage.setItem('mr_admin_token', t);
-    }
-  }, []);
 
   const players = useMemo(() => {
     const out: any[] = [];
     const p = (state)?.players;
     if (!p) return out;
-    try { if (typeof p.forEach === 'function') { p.forEach((v: any) => v && out.push(v)); return out; } } catch {}
-    try { if (Array.isArray(p)) return p.filter(Boolean); } catch {}
-    try { return Object.values(p).filter(Boolean); } catch {}
+    try { if (typeof p.forEach === 'function') { p.forEach((v: any) => v && out.push(v)); return out; } } catch { void 0; }
+    try { if (Array.isArray(p)) return p.filter(Boolean); } catch { void 0; }
+    try { return Object.values(p).filter(Boolean); } catch { void 0; }
     return out;
   }, [state]);
   const scenes = useMemo(() => {
@@ -111,7 +74,7 @@ export default function Admin() {
     const items = text.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
     const tiers: { count: number; points: number }[] = [];
     for (const it of items) {
-      const m = /^(\d+)\s*[xX:\*]\s*(\d+)$/.exec(it);
+      const m = /^(\d+)\s*[xX:*]\s*(\d+)$/.exec(it);
       if (!m) continue;
       const count = parseInt(m[1], 10);
       const points = parseInt(m[2], 10);
@@ -161,7 +124,7 @@ export default function Admin() {
   }
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className="admin-root">
       <h2>Admin</h2>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0 4px' }}>
         <label style={{ fontSize: 12, color: '#6cf' }}>Admin Token</label>
@@ -240,16 +203,15 @@ export default function Admin() {
               </div>
               <div style={{ fontSize: 12, color: '#9df', marginTop: 8 }}>Tip: Select scenes, reorder, and rename as needed.</div>
               <div style={{ marginTop: 10 }}>
-                <RangesSettings state={state} sendAdmin={sendAdmin} />
+                <AdminRangesSettings state={state} sendAdmin={sendAdmin} />
               </div>
               <div style={{ marginTop: 10 }}>
-                <MultiplierSettings state={state} sendAdmin={sendAdmin} />
+                <AdminMultiplierSettings state={state} sendAdmin={sendAdmin} />
               </div>
             </div>
           ) : (
             <div style={{ color: '#fc6' }}>No scenes received from client yet.</div>
           )}
-          {/* Removed manual stage entry; selection + ordering + naming controls above */}
           <div style={{ marginTop: 8 }}>Points Tiers (e.g., 3x10,5x7,2x5)</div>
           <input value={tiersText} onChange={(e) => setTiersText(e.target.value)} style={{ width: '100%' }} />
           <div style={{ marginTop: 8, color: '#9df' }}>
@@ -276,8 +238,7 @@ export default function Admin() {
               : '-';
             return (
               <div style={{ display: 'grid', gap: 10 }}>
-                {/* Caption editor and live preview */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <div style={{ color: '#9df' }}>Caption:</div>
                   <input
                     value={titleDraft}
@@ -292,7 +253,6 @@ export default function Admin() {
                     placeholder="Enter race title"
                     style={{ minWidth: 220, padding: 8, border: '3px solid #333', background: '#14161b', color: '#fff' }}
                   />
-                  {/* Live styled preview */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#0b0f15', border: '4px solid #6cf', boxShadow: '0 0 0 2px #036 inset' }}>
                     <span style={{
                       fontWeight: 1000,
@@ -316,10 +276,6 @@ export default function Admin() {
                       boxShadow: '0 0 12px #630',
                     }}>{currentStageName}</span>
                   </div>
-                  <style>{`
-                    @keyframes neonShift { to { background-position: 200% center } }
-                    @keyframes neonGlow { 0% { text-shadow: 0 0 6px #069 } 100% { text-shadow: 0 0 16px #0bf } }
-                  `}</style>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <div style={{ color: '#9df' }}>Flow:</div>
@@ -355,10 +311,10 @@ export default function Admin() {
                   <Button onClick={() => sendAdmin('reset')}>Reset Race</Button>
                   <Button onClick={() => sendAdmin('finish')}>Finish Race</Button>
                 </div>
-                <PrepSettings state={state} sendAdmin={sendAdmin} />
-                <AutoAdvanceSettings state={state} sendAdmin={sendAdmin} />
-                <CeremonySettings state={state} sendAdmin={sendAdmin} />
-                <MusicSettings state={state} sendAdmin={sendAdmin} />
+                <AdminPrepSettings state={state} sendAdmin={sendAdmin} />
+                <AdminAutoAdvanceSettings state={state} sendAdmin={sendAdmin} />
+                <AdminCeremonySettings state={state} sendAdmin={sendAdmin} />
+                <AdminMusicSettings state={state} sendAdmin={sendAdmin} />
                 <div style={{ display: 'grid', gap: 6 }}>
                   <Badge>Lobby: {state?.lobbyOpen ? 'Open' : 'Closed'}</Badge>
                   <Badge>Global: {state?.globalPhase}</Badge>
@@ -411,214 +367,4 @@ export default function Admin() {
     </div>
   );
 }
-
-function PrepSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
-  const [seconds, setSeconds] = React.useState<number>(() => Math.max(0, Math.round((state?.perPrepTimeoutMs || 60000)/1000)));
-  React.useEffect(() => {
-    setSeconds(Math.max(0, Math.round((state?.perPrepTimeoutMs || 60000)/1000)));
-  }, [state?.perPrepTimeoutMs]);
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <Badge>Prep limit: {Math.max(0, Math.round((state?.perPrepTimeoutMs || 0)/1000))}s</Badge>
-      <input
-        type="number"
-        min={0}
-        value={seconds}
-        onChange={(e) => setSeconds(Math.max(0, Number(e.target.value) || 0))}
-        style={{ width: 100, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
-      />
-      <Button onClick={() => sendAdmin('setPrepTimeout', { seconds })}>Set Prep Limit</Button>
-    </div>
-  );
-}
-
-function AutoAdvanceSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
-  const [seconds, setSeconds] = React.useState<number>(() => Math.max(0, Math.round((state?.perPostStageDelayMs || 15000)/1000)));
-  React.useEffect(() => {
-    setSeconds(Math.max(0, Math.round((state?.perPostStageDelayMs || 15000)/1000)));
-  }, [state?.perPostStageDelayMs]);
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <Badge>Auto-advance in: {Math.max(0, Math.round((state?.perPostStageDelayMs || 0)/1000))}s</Badge>
-      <input
-        type="number"
-        min={0}
-        value={seconds}
-        onChange={(e) => setSeconds(Math.max(0, Number(e.target.value) || 0))}
-        style={{ width: 120, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
-      />
-      <Button onClick={() => sendAdmin('setAutoAdvanceDelay', { seconds })}>Set Auto-Advance Delay</Button>
-    </div>
-  );
-}
-
-function CeremonySettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
-  const [seconds, setSeconds] = React.useState<number>(() => {
-    const ms = Number(state?.ceremonyDwellMs ?? 10000);
-    return Math.max(0.3, Math.min(60, Math.round(ms/100)/10));
-  });
-  React.useEffect(() => {
-    const ms = Number(state?.ceremonyDwellMs ?? 10000);
-    setSeconds(Math.max(0.3, Math.min(60, Math.round(ms/100)/10)));
-  }, [state?.ceremonyDwellMs]);
-  const active = !!state?.ceremonyActive;
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <Badge>Award Ceremony: {active ? 'Running' : 'Idle'}</Badge>
-      <label style={{ fontSize: 12, color: '#9df' }}>Per-player dwell (s)</label>
-      <input
-        type="number"
-        min={0.3}
-        step={0.1}
-        value={seconds}
-        onChange={(e) => setSeconds(Math.max(0.3, Math.min(60, Number(e.target.value) || 0.3)))}
-        style={{ width: 120, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
-      />
-      <Button onClick={() => sendAdmin('startCeremony', { seconds })}>{active ? 'Restart Ceremony' : 'Start Ceremony'}</Button>
-      <Button onClick={() => sendAdmin('stopCeremony')} disabled={!active}>Stop</Button>
-    </div>
-  );
-}
-
-function MusicSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
-  const [text, setText] = React.useState<string>('');
-  React.useEffect(() => {
-    setText(String(state?.spotifyPlaylistId || ''));
-  }, [state?.spotifyPlaylistId]);
-  const id = String(state?.spotifyPlaylistId || '').trim();
-  const embedUrl = id ? `https://open.spotify.com/playlist/${id}` : '';
-  return (
-    <div style={{ display: 'grid', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <Badge>Spotify Playlist</Badge>
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Playlist ID or URL"
-          style={{ minWidth: 260, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
-        />
-        <Button onClick={() => sendAdmin('setSpotifyPlaylist', { id: text })}>Apply</Button>
-        <Button onClick={() => { setText(''); sendAdmin('setSpotifyPlaylist', { id: '' }); }}>Clear</Button>
-      </div>
-      {id && (
-        <div style={{ fontSize: 12, color: '#9df' }}>
-          Current: <a href={embedUrl} target="_blank" rel="noreferrer">{id}</a>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MultiplierSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
-  const [val, setVal] = React.useState<number>(() => {
-    const v = Number(state?.marbleMultiplier ?? 1);
-    return Number.isFinite(v) ? v : 1;
-  });
-  React.useEffect(() => {
-    const v = Number(state?.marbleMultiplier ?? 1);
-    setVal(Number.isFinite(v) ? v : 1);
-  }, [state?.marbleMultiplier]);
-  const options = Array.from({ length: 8 }, (_, i) => 0.5 + i * 0.5); // 0.5..4.0
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-      <Badge>Marble Multiplier</Badge>
-      <select
-        value={val}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          setVal(v);
-          sendAdmin('setMarbleMultiplier', { value: v });
-        }}
-        style={{ padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
-      >
-        {options.map((o) => (
-          <option key={o} value={o}>{`x${o.toFixed(1)}`}</option>
-        ))}
-      </select>
-      <span style={{ color: '#9df', fontSize: 12 }}>(Auto-applies)</span>
-    </div>
-  );
-}
-
-function RangesSettings({ state, sendAdmin }: { state: any; sendAdmin: (a: string, d?: any) => void }) {
-  interface Pair { min: number; max: number }
-  const getPair = (p: any, defMin: number, defMax: number): Pair => ({
-    min: Number.isFinite(Number(p?.min)) ? Number(p.min) : defMin,
-    max: Number.isFinite(Number(p?.max)) ? Number(p.max) : defMax,
-  });
-  const s = (state) || {};
-  const rr = s?.ranges || {};
-  const [radius, setRadius] = React.useState<Pair>(getPair(rr?.radius, 0.02, 0.045));
-  const [density, setDensity] = React.useState<Pair>(getPair(rr?.density, 0.5, 4.0));
-  const [friction, setFriction] = React.useState<Pair>(getPair(rr?.friction, 0.0, 1.0));
-  const [restitution, setRestitution] = React.useState<Pair>(getPair(rr?.restitution, 0.0, 1.0));
-  const decs = {
-    radius: 3,
-    density: 1,
-    friction: 2,
-    restitution: 2,
-  } as const;
-  const round = (v: number, d: number) => {
-    if (!Number.isFinite(v)) return 0;
-    const f = Math.pow(10, d);
-    return Math.round(v * f) / f;
-  };
-  const fmt = (v: number, d: number) => (Number.isFinite(v) ? v.toFixed(d) : '');
-  React.useEffect(() => {
-    const rr2 = (state)?.ranges || {};
-    setRadius(getPair(rr2?.radius, 0.02, 0.045));
-    setDensity(getPair(rr2?.density, 0.5, 4.0));
-    setFriction(getPair(rr2?.friction, 0.0, 1.0));
-    setRestitution(getPair(rr2?.restitution, 0.0, 1.0));
-  }, [state?.ranges]);
-  const numberInputStyle = { width: 90, padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' } as React.CSSProperties;
-  return (
-    <div style={{ display: 'grid', gap: 8 }}>
-      <Badge>Value Ranges (Auto-applies)</Badge>
-      {([
-        { key: 'radius', label: 'Diameter (m)', value: radius, set: setRadius, step: 0.001, d: decs.radius },
-        { key: 'density', label: 'Density', value: density, set: setDensity, step: 0.1, d: decs.density },
-        { key: 'friction', label: 'Friction', value: friction, set: setFriction, step: 0.01, d: decs.friction },
-        { key: 'restitution', label: 'Bounciness', value: restitution, set: setRestitution, step: 0.01, d: decs.restitution },
-      ] as const).map(({ key, label, value, set, step }) => (
-        <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ width: 140, color: '#9df' }}>{label}</div>
-          <label style={{ color: '#aaa' }}>Min</label>
-          <input
-            type="number"
-            step={step}
-            value={fmt(value.min, (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution))}
-            onChange={(e) => {
-              const next = { min: Number(e.target.value), max: value.max };
-              set(next);
-              sendAdmin('setClampRanges', { [key]: next });
-            }}
-            onBlur={(e) => {
-              const next = { min: round(Number(e.target.value), (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution)), max: value.max };
-              set(next);
-              sendAdmin('setClampRanges', { [key]: next });
-            }}
-            style={numberInputStyle}
-          />
-          <label style={{ color: '#aaa' }}>Max</label>
-          <input
-            type="number"
-            step={step}
-            value={fmt(value.max, (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution))}
-            onChange={(e) => {
-              const next = { min: value.min, max: Number(e.target.value) };
-              set(next);
-              sendAdmin('setClampRanges', { [key]: next });
-            }}
-            onBlur={(e) => {
-              const next = { min: value.min, max: round(Number(e.target.value), (key==='radius'?decs.radius:key==='density'?decs.density:key==='friction'?decs.friction:decs.restitution)) };
-              set(next);
-              sendAdmin('setClampRanges', { [key]: next });
-            }}
-            style={numberInputStyle}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
+/* eslint-env browser */
