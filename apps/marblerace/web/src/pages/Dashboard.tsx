@@ -781,11 +781,3 @@ function buildPlayerColorMap(s: any): Record<string, string> {
   } catch { void 0; }
   return out;
 }
-
-// TickerLatest extracted to components/dashboard/TickerLatest
-
-// iconForKind in TickerLatest
-
-// RewardsCompact extracted to components/dashboard/RewardsCompact
-
-// highlightMessage moved into TickerLatest
