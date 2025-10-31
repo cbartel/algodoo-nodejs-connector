@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { formatPoints } from '../../utils/points';
+
 export interface RowHighlight { id: number; left: number; top: number; width: number; height: number; color: string }
 export interface ClaimBurst { id: number; pts: number; name: string; color: string; left: number; top: number }
 
@@ -31,11 +33,10 @@ export default function ClaimBurstsOverlay({ bursts, highlights }:{ bursts: Clai
           }}>
             <span style={{ width: 10, height: 10, background: b.color, borderRadius: '50%', boxShadow: `0 0 8px ${b.color}aa` }} />
             <span style={{ color: '#cde', fontSize: 13, fontWeight: 700, textShadow: '0 1px 0 #000' }}>{b.name}</span>
-            <span style={{ color: b.color, fontWeight: 1000, fontSize: 18, textShadow: '0 1px 0 #000' }}>+{b.pts}</span>
+            <span style={{ color: b.color, fontWeight: 1000, fontSize: 18, textShadow: '0 1px 0 #000' }}>+{formatPoints(b.pts)}</span>
           </div>
         </div>
       ))}
     </div>
   );
 }
-

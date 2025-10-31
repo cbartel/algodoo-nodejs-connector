@@ -71,7 +71,9 @@ Primary commands
   - Admin page
     - Visible Admin Token field (also supports `?token=...`), sent with admin actions, persisted to `localStorage`.
     - If token invalid, the server replies with `admin.denied` and the UI shows an alert.
-can we    - Media: supports setting a Spotify playlist (by ID or URL). Server stores `spotifyPlaylistId`; Dashboard embeds the playlist above the event tracker next to the QR.
+    - Create Race builder: choose scenes from Algodoo, rename them, set repeat counts, and assign per-stage point multipliers (×0.5 → ×3.0). Multipliers scale the configured points tiers for that stage run and are displayed across Admin/Game/Dashboard UIs.
+    - Controls include `Restart Stage` (reloads the active scene, clears placements, and unlocks player spawns) and per-player `Respawn` actions (drops a fresh marble for that player during prep/countdown/running).
+    - Media: supports setting a Spotify playlist (by ID or URL). Server stores `spotifyPlaylistId`; Dashboard embeds the playlist above the event tracker next to the QR.
   - Game page
     - Clean flow: prompt for name → in `'prep'` or `'countdown'` show “Prepare Your Marble”.
     - Points-based customization: 10 points across diameter/density/friction/restitution using +/– controls and progress bars. Values are mapped across protocol clamp ranges.
@@ -106,6 +108,7 @@ can we    - Media: supports setting a Spotify playlist (by ID or URL). Server st
 - Stage phases include `'prep'`; server assumes clients will present prep UI and send `spawn` during `'prep'` or `'countdown'`.
 - `Player.spawned` indicates config lock for that stage.
 - Points/clamping: server remains authoritative; client UI should stay within `clampRanges` but server clamps regardless.
+- Stage multiplier: defaults to 1.0; server snaps incoming values to 0.5-step increments within [0.5, 3.0] and multiplies tier rewards per stage.
 
 
 ## Common Tasks for Agents

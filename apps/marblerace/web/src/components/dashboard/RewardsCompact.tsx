@@ -1,14 +1,16 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+import { formatPoints } from '../../utils/points';
 import { renderRewardBadge } from '../../utils/rewards';
 
-export default function RewardsCompact({ pool, remaining }: { pool: { points: number; tier: number }[]; remaining: { points: number; tier: number }[] }) {
+export default function RewardsCompact({ pool, remaining, multiplier = 1 }:
+  { pool: { points: number; tier: number }[]; remaining: { points: number; tier: number }[]; multiplier?: number }) {
   const outerRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
   const badgesRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
-  const totalRemaining = useMemo(() => remaining.reduce((a, b) => a + (b.points | 0), 0), [remaining]);
-  const totalPool = useMemo(() => (pool.reduce((a, b) => a + (b.points | 0), 0) || 1), [pool]);
+  const totalRemaining = useMemo(() => remaining.reduce((a, b) => a + Number((b?.points) ?? 0), 0), [remaining]);
+  const totalPool = useMemo(() => pool.reduce((a, b) => a + Number((b?.points) ?? 0), 0) || 1, [pool]);
   const pct = Math.max(0, Math.min(100, Math.round(100 - (totalRemaining / totalPool) * 100)));
   useLayoutEffect(() => {
     const outer = outerRef.current;
@@ -22,11 +24,13 @@ export default function RewardsCompact({ pool, remaining }: { pool: { points: nu
     setScale(Number.isFinite(s) ? s : 1);
   }, [remaining?.length, totalRemaining]);
   const scaledWidth = `${(1 / (scale || 1)) * 100}%`;
+  const multiplierDisplay = Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+  const multiplierTag = Math.abs(multiplierDisplay - 1) > 0.001 ? `×${multiplierDisplay.toFixed(1)}` : '×1.0';
   return (
     <div ref={outerRef} style={{ minHeight: 0, overflow: 'hidden' }}>
       <div ref={headerRef} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-        <span style={{ color: '#9df', fontWeight: 700, fontSize: 12 }}>Stage Rewards</span>
-        <span style={{ color: '#9df', fontSize: 12 }}>Remaining: <strong style={{ color: '#6cf' }}>{totalRemaining}</strong></span>
+        <span style={{ color: '#9df', fontWeight: 700, fontSize: 12 }}>Stage Rewards <span style={{ color: '#6cf', fontWeight: 600 }}>({multiplierTag})</span></span>
+        <span style={{ color: '#9df', fontSize: 12 }}>Remaining: <strong style={{ color: '#6cf' }}>{formatPoints(totalRemaining)}</strong></span>
       </div>
       <div ref={badgesRef} style={{ transform: `scale(${scale})`, transformOrigin: 'left top', width: scaledWidth }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', overflow: 'hidden' }}>

@@ -4,9 +4,12 @@ import { Button, Panel } from 'marblerace-ui-kit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import CheerPanel, { type CheerDef } from '../components/game/CheerPanel';
+import SoundControls from '../components/SoundControls';
+import { useSound } from '../context/SoundProvider';
 import { useRoom } from '../hooks/useRoom';
 import { getPlayerKey } from '../lib/colyseus';
 import { okLabDistance } from '../utils/color';
+import { formatPoints, safeMultiplier } from '../utils/points';
 import './Game.css';
 
 
@@ -14,6 +17,7 @@ export default function Game() {
   const [room, setRoom] = useState<any>(null);
   const [state, setState] = useState<any>(null);
   const [name, setName] = useState(localStorage.getItem('mr_name') || '');
+  const { play: playSound } = useSound();
   const playerKeyRef = useRef<string>(getPlayerKey());
   const [config, setConfig] = useState<any>({
     radius: defaultMarbleConfig.radius,
@@ -29,6 +33,11 @@ export default function Game() {
   const [cheers, setCheers] = useState<CheerDef[]>([]);
   const forceCheerUi = useRef(0);
   const lastCheerSentAtRef = useRef(0);
+  const countdownMsRef = useRef<number>(0);
+  const countdownSecRef = useRef<number | null>(null);
+  const stagePhaseRef = useRef<string | null>(null);
+  const spawnedRef = useRef<boolean>(false);
+  const spawnInitRef = useRef<boolean>(true);
   useEffect(() => {
     try {
       const raw = localStorage.getItem('mr_cheers_v2');
@@ -240,18 +249,57 @@ export default function Game() {
   const myStagePoints = (me)?.results?.[stageIdx]?.points ?? 0;
   const myTotal = (me)?.totalPoints ?? 0;
   const currentStageName = stageIdx >= 0 ? (state?.stages?.[stageIdx]?.name || state?.stages?.[stageIdx]?.id) : '-';
+  const currentStageMultiplier = stageIdx >= 0 ? safeMultiplier(state?.stages?.[stageIdx]?.multiplier, 1) : 1;
+  const currentStageDisplay = Math.abs(currentStageMultiplier - 1) > 0.001
+    ? `${currentStageName} ×${currentStageMultiplier.toFixed(1)}`
+    : currentStageName;
   const [scoreFx, setScoreFx] = useState(false);
   const lastTotalRef = useRef<number>(0);
   useEffect(() => {
     const prev = lastTotalRef.current;
     if (myTotal > prev) {
       setScoreFx(true);
+      playSound('reward_claim');
       const t = setTimeout(() => setScoreFx(false), 1200);
       lastTotalRef.current = myTotal;
       return () => clearTimeout(t);
     }
     lastTotalRef.current = myTotal;
-  }, [myTotal]);
+  }, [myTotal, playSound]);
+
+  useEffect(() => {
+    const ms = Number(state?.countdownMsRemaining ?? 0);
+    const sec = Math.max(0, Math.ceil(ms / 1000));
+    const prevSec = countdownSecRef.current;
+    if (prevSec != null && sec < prevSec) {
+      if (sec > 0) playSound('countdown_tick');
+      else if (prevSec > 0) playSound('countdown_go');
+    }
+    countdownSecRef.current = sec;
+    countdownMsRef.current = ms;
+  }, [state?.countdownMsRemaining, playSound]);
+
+  useEffect(() => {
+    const phase = String(state?.stagePhase || '');
+    const prev = stagePhaseRef.current;
+    if (prev && prev !== phase) {
+      if (phase === 'prep' || phase === 'running') playSound('stage_transition');
+      if (phase === 'stage_finished') playSound('leaderboard');
+    }
+    stagePhaseRef.current = phase;
+  }, [state?.stagePhase, playSound]);
+
+  useEffect(() => {
+    const spawned = !!me?.spawned;
+    const was = spawnedRef.current;
+    if (spawnInitRef.current) {
+      spawnInitRef.current = false;
+      spawnedRef.current = spawned;
+      return;
+    }
+    if (!was && spawned) playSound('spawn_confirmed');
+    spawnedRef.current = spawned;
+  }, [me?.spawned, playSound]);
 
   useEffect(() => {
     if (!me && inLobby && lobbyOpen) nameInputRef.current?.focus();
@@ -383,31 +431,26 @@ export default function Game() {
             fontWeight: 900,
             background: 'rgba(40,30,0,0.35)',
             boxShadow: '0 0 12px #630',
-          }}>{currentStageName}</span>
+          }}>{currentStageDisplay}</span>
+        </div>
+        <div className="mr-right">
+          <SoundControls compact />
           {me && (
             <div style={{
-              marginLeft: 'auto',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              flexWrap: 'wrap',
+              display: 'flex', alignItems: 'center', gap: 10,
+              background: '#0f1115', border: '4px solid #6cf', boxShadow: '0 0 0 2px #036 inset',
+              padding: '6px 10px', borderRadius: 12,
             }}>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                background: '#0f1115', border: '4px solid #6cf', boxShadow: '0 0 0 2px #036 inset',
-                padding: '6px 10px', borderRadius: 12,
-              }}>
-                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                  <span title="your marble" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #666', display: 'inline-block', background: colorHex }} />
-                  <strong>{me.name}</strong>
-                </div>
-                <span style={{ color: '#555' }}>•</span>
-                <div title="Overall standing" style={{ color:'#ffd700', fontWeight:900 }}>#{myRank || '-'}</div>
-                <span style={{ color: '#555' }}>•</span>
-                <div title="Total points" style={{ color:'#cde' }}>Total: <strong>{myTotal}</strong></div>
-                <span style={{ color: '#555' }}>•</span>
-                <div title="Points this stage" style={{ color:'#6f6' }}>Stage: <strong>+{myStagePoints}</strong></div>
+              <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                <span title="your marble" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #666', display: 'inline-block', background: colorHex }} />
+                <strong>{me.name}</strong>
               </div>
+              <span style={{ color: '#555' }}>•</span>
+              <div title="Overall standing" style={{ color:'#ffd700', fontWeight:900 }}>#{myRank || '-'}</div>
+              <span style={{ color: '#555' }}>•</span>
+              <div title="Total points" style={{ color:'#cde' }}>Total: <strong>{formatPoints(myTotal)}</strong></div>
+              <span style={{ color: '#555' }}>•</span>
+              <div title="Points this stage" style={{ color:'#6f6' }}>Stage: <strong>+{formatPoints(myStagePoints)}</strong></div>
             </div>
           )}
         </div>
@@ -676,7 +719,7 @@ export default function Game() {
               <div style={{ display: 'grid', gap: 8 }}>
                 <div>Players in lobby: {playersCount}</div>
                 <div>Phase: {inPrep ? 'Preparation' : inCountdown ? 'Countdown' : state?.stagePhase}</div>
-                <div>Stage: {currentStageName}</div>
+                <div>Stage: {currentStageDisplay}</div>
               </div>
             </Panel>
           </div>
@@ -705,7 +748,7 @@ export default function Game() {
                   .sort((a: any, b: any) => (a.res.placement || 9999) - (b.res.placement || 9999))
                   .map((r: any, i: number) => (
                     <li key={i}>
-                      {r.res.placement ? `#${r.res.placement} ` : 'DNF '} {r.name} {r.res.points ? `(+${r.res.points})` : ''}
+                      {r.res.placement ? `#${r.res.placement} ` : 'DNF '} {r.name} {r.res.points ? `(+${formatPoints(r.res.points)})` : ''}
                     </li>
                   ))}
               </ol>

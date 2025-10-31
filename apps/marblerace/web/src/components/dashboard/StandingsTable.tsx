@@ -3,6 +3,8 @@ import React from 'react';
 
 import type { MutableRefObject } from 'react';
 
+import { formatPoints } from '../../utils/points';
+
 export interface StandRow { id: string; name: string; total: number; colorHex: string }
 
 export default function StandingsTable({ standings, nameRefs, tableRef, limit = 10 }:
@@ -26,7 +28,7 @@ export default function StandingsTable({ standings, nameRefs, tableRef, limit = 
               <span title="player color" style={{ width: 10, height: 10, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: p.colorHex }} />
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{p.name}</span>
             </span>,
-            p.total
+            formatPoints(p.total)
           ])}
         />
       </div>

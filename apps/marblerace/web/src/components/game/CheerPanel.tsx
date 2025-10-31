@@ -1,9 +1,12 @@
 import React from 'react';
 
+import { useSound } from '../../context/SoundProvider';
+
 export interface CheerDef { icon: string; text: string }
 
 export default function CheerPanel({ room, me, state, cheerEdit, setCheerEdit, cheers, setCheers, forceCheerUi: _forceCheerUi, lastCheerSentAtRef }:
   { room: any; me: any; state: any; cheerEdit: boolean; setCheerEdit: (v: boolean) => void; cheers: CheerDef[]; setCheers: React.Dispatch<React.SetStateAction<CheerDef[]>>; forceCheerUi: React.MutableRefObject<number>; lastCheerSentAtRef: React.MutableRefObject<number>; }) {
+  const { play: playSound } = useSound();
   const inRunning = state?.stagePhase === 'running';
   const inPrepCheer = (state?.globalPhase === 'intermission' && state?.stagePhase === 'prep');
   const inCountdown = state?.stagePhase === 'countdown';
@@ -61,6 +64,7 @@ export default function CheerPanel({ room, me, state, cheerEdit, setCheerEdit, c
   const send = (icon: string, ev?: React.MouseEvent<HTMLButtonElement>) => {
     lastCheerSentAtRef.current = Date.now();
     room?.send('cheer', { icon, text: getMsgForIcon(icon) });
+    playSound('cheer');
     try { ev?.currentTarget?.blur(); } catch { void 0; }
     const fxId = Math.floor(Math.random()*1e9);
     setSentFx((prev) => [...prev, { id: fxId, icon }]);

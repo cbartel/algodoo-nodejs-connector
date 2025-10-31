@@ -97,7 +97,7 @@ export class Orchestrator {
             spawnMarble(i);
         });
     } : { 
-        spawnMarble(); 
+        spawnMarble(1); 
     };
     
     `

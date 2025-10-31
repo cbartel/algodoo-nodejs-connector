@@ -109,6 +109,8 @@ export interface StageConfig {
   // Optional number of times to run this stage consecutively during the race setup.
   // Server may expand this into repeated entries; default is 1.
   repeats?: number;
+  // Optional per-stage points multiplier applied to awarded tier values. Defaults to 1.0.
+  multiplier?: number;
 }
 
 export type PlayerId = string;
@@ -162,19 +164,28 @@ export type ClientMsg =
 // Admin actions (must be authorized by server)
 /** Admin messages gated by MARBLERACE_ADMIN_TOKEN. */
 export type AdminMsg =
-  | { type: 'admin/createRace'; payload: { stages: StageConfig[]; seed?: string; perStageTimeoutMs: number; pointsTable?: PointsTable } }
+  | { type: 'admin/createRace'; payload: { stages: StageConfig[]; seed?: string; perStageTimeoutMs?: number; pointsTable?: PointsTable; tiers?: PointsConfig } }
   | { type: 'admin/openLobby' }
   | { type: 'admin/lockLobby' }
   | { type: 'admin/start' }
   | { type: 'admin/reset' }
   | { type: 'admin/finish' }
   | { type: 'admin/nextStage' }
+  | { type: 'admin/endStageNow' }
+  | { type: 'admin/restartStage' }
   | { type: 'admin/setAutoAdvance'; payload: { auto: boolean } }
   | { type: 'admin/removePlayer'; payload: { playerId: string } }
+  | { type: 'admin/respawnPlayer'; payload: { playerId: string } }
   | { type: 'admin/setPrepTimeout'; payload: { seconds?: number; ms?: number } }
   | { type: 'admin/setAutoAdvanceDelay'; payload: { seconds?: number; ms?: number } }
   | { type: 'admin/setMarbleMultiplier'; payload: { value: number } }
-  | { type: 'admin/setClampRanges'; payload: Partial<ClampRanges> };
+  | { type: 'admin/setClampRanges'; payload: Partial<ClampRanges> }
+  | { type: 'admin/scanScenes' }
+  | { type: 'admin/setSpotifyPlaylist'; payload: { id: string } }
+  | { type: 'admin/setEnforceUniqueColors'; payload: { enforce: boolean } }
+  | { type: 'admin/setTitle'; payload: { title: string } }
+  | { type: 'admin/startCeremony'; payload?: { seconds?: number; ms?: number } }
+  | { type: 'admin/stopCeremony' };
 
 export type AnyIncoming = ClientMsg | AdminMsg;
 

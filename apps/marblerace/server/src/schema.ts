@@ -38,13 +38,14 @@ export class ClampRangesSchema extends Schema {
 export class StageSchema extends Schema {
   @colyseusType('string') id = '';
   @colyseusType('string') name = '';
+  @colyseusType('number') multiplier = 1.0;
 }
 
 /** Per-stage result for a player. */
 export class ResultSchema extends Schema {
   @colyseusType('int16') stageIndex = -1;
   @colyseusType('int16') placement = 0; // 0 => DNF
-  @colyseusType('int32') points = 0;
+  @colyseusType('number') points = 0;
   @colyseusType('number') finishedAt = 0; // 0 => undefined
 }
 
@@ -71,7 +72,7 @@ export class PlayerSchema extends Schema {
   @colyseusType('string') name = '';
   @colyseusType(ConfigSchema) config = new ConfigSchema();
   @colyseusType('boolean') spawned = false;
-  @colyseusType('int32') totalPoints = 0;
+  @colyseusType('number') totalPoints = 0;
   @colyseusType('int16') bestPlacement = 0; // 0 => none
   @colyseusType('int16') earliestBestStageIndex = -1;
   @colyseusType([ResultSchema]) results = new ArraySchema<ResultSchema>();

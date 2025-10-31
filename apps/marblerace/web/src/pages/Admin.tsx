@@ -10,6 +10,7 @@ import AdminRangesSettings from '../components/admin/AdminRangesSettings';
 import { useAdminToken } from '../hooks/useAdminToken';
 import { usePingInfo } from '../hooks/usePingInfo';
 import { useRoom } from '../hooks/useRoom';
+import { formatPoints } from '../utils/points';
 import './Admin.css';
 
 export default function Admin() {
@@ -19,6 +20,7 @@ export default function Admin() {
   const [selectedScenes, setSelectedScenes] = useState<string[]>([]);
   const [stageNames, setStageNames] = useState<Record<string, string>>({});
   const [stageRepeats, setStageRepeats] = useState<Record<string, number>>({});
+  const [stageMultipliers, setStageMultipliers] = useState<Record<string, number>>({});
   const { token, setToken } = useAdminToken();
   const pingInfo = usePingInfo();
   const [titleDraft, setTitleDraft] = useState<string>('');
@@ -63,6 +65,7 @@ export default function Admin() {
     const diff = Date.now() - ts;
     return Math.round(diff / 1000);
   }, [state?.clientLastAliveTs]);
+  const allowRespawn = ['prep', 'countdown', 'running'].includes(String(state?.stagePhase || ''));
 
   function sendAdmin(action: string, data?: any) {
     if (!room) return;
@@ -92,11 +95,17 @@ export default function Admin() {
 
   function createRace() {
     const source = selectedScenes;
-    const stages = source.map((id) => ({
-      id,
-      name: (stageNames[id] || '').trim() || defaultNameFromId(id),
-      repeats: Math.max(1, Number(stageRepeats[id] ?? 1) | 0),
-    }));
+    const stages = source.map((id) => {
+      const repeats = Math.max(1, Number(stageRepeats[id] ?? 1) | 0);
+      const multiplierRaw = Number(stageMultipliers[id] ?? 1);
+      const multiplier = Number.isFinite(multiplierRaw) ? multiplierRaw : 1;
+      return {
+        id,
+        name: (stageNames[id] || '').trim() || defaultNameFromId(id),
+        repeats,
+        multiplier,
+      };
+    });
     const tiers = parseTiers(tiersText);
     sendAdmin('createRace', { stages, tiers });
   }
@@ -121,7 +130,14 @@ export default function Admin() {
       delete n[id];
       return n;
     });
+    setStageMultipliers((prev) => {
+      const n = { ...prev } as any;
+      delete n[id];
+      return n;
+    });
   }
+
+  const stageMultiplierOptions = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
 
   return (
     <div className="admin-root">
@@ -160,6 +176,7 @@ export default function Admin() {
                             if (e.target.checked) {
                               setSelectedScenes((prev) => prev.includes(s) ? prev : [...prev, s]);
                               setStageNames((prev) => ({ ...prev, [s]: prev[s] ?? defaultNameFromId(s) }));
+                              setStageMultipliers((prev) => ({ ...prev, [s]: prev[s] ?? 1 }));
                             } else {
                               removeStage(s);
                             }
@@ -174,30 +191,45 @@ export default function Admin() {
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>Selected Stages (order & names)</div>
                   <div style={{ maxHeight: 200, overflow: 'auto', border: '3px solid #333', padding: 8, display: 'grid', gap: 6 }}>
                     {selectedScenes.length === 0 && <div style={{ color: '#aaa' }}>No stages selected yet.</div>}
-                    {selectedScenes.map((id, idx) => (
-                      <div key={id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', alignItems: 'center', gap: 8 }}>
-                        <input
-                          value={stageNames[id] ?? defaultNameFromId(id)}
-                          onChange={(e) => setStageNames((prev) => ({ ...prev, [id]: e.target.value }))}
-                          placeholder={defaultNameFromId(id)}
-                          style={{ padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
-                        />
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ color: '#6cf' }}>Repeats</span>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                            <Button onClick={() => setStageRepeats((prev) => ({ ...prev, [id]: Math.max(1, (Number(prev[id] ?? 1) | 0) - 1) }))}>-</Button>
-                            <span style={{ minWidth: 24, textAlign: 'center' }}>{Math.max(1, Number(stageRepeats[id] ?? 1) | 0)}</span>
-                            <Button onClick={() => setStageRepeats((prev) => ({ ...prev, [id]: Math.max(1, (Number(prev[id] ?? 1) | 0) + 1) }))}>+</Button>
+                    {selectedScenes.map((id, idx) => {
+                      const multiplierValue = stageMultipliers[id] ?? 1;
+                      return (
+                        <div key={id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', alignItems: 'center', gap: 8 }}>
+                          <input
+                            value={stageNames[id] ?? defaultNameFromId(id)}
+                            onChange={(e) => setStageNames((prev) => ({ ...prev, [id]: e.target.value }))}
+                            placeholder={defaultNameFromId(id)}
+                            style={{ padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
+                          />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ color: '#6cf' }}>Repeats</span>
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <Button onClick={() => setStageRepeats((prev) => ({ ...prev, [id]: Math.max(1, (Number(prev[id] ?? 1) | 0) - 1) }))}>-</Button>
+                              <span style={{ minWidth: 24, textAlign: 'center' }}>{Math.max(1, Number(stageRepeats[id] ?? 1) | 0)}</span>
+                              <Button onClick={() => setStageRepeats((prev) => ({ ...prev, [id]: Math.max(1, (Number(prev[id] ?? 1) | 0) + 1) }))}>+</Button>
+                            </div>
                           </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ color: '#6cf' }}>Multiplier</span>
+                            <select
+                              value={String(multiplierValue)}
+                              onChange={(e) => setStageMultipliers((prev) => ({ ...prev, [id]: parseFloat(e.target.value) }))}
+                              style={{ padding: 6, border: '3px solid #333', background: '#14161b', color: '#fff' }}
+                            >
+                              {stageMultiplierOptions.map((opt) => (
+                                <option key={opt} value={opt}>{`×${opt.toFixed(1)}`}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <Button onClick={() => moveStage(idx, -1)} disabled={idx === 0}>Up</Button>
+                            <Button onClick={() => moveStage(idx, +1)} disabled={idx === selectedScenes.length - 1}>Down</Button>
+                            <Button onClick={() => removeStage(id)}>Remove</Button>
+                          </div>
+                          <div style={{ gridColumn: '1 / span 4', fontSize: 12, color: '#9df' }}>{id}</div>
                         </div>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <Button onClick={() => moveStage(idx, -1)} disabled={idx === 0}>Up</Button>
-                          <Button onClick={() => moveStage(idx, +1)} disabled={idx === selectedScenes.length - 1}>Down</Button>
-                          <Button onClick={() => removeStage(id)}>Remove</Button>
-                        </div>
-                        <div style={{ gridColumn: '1 / span 3', fontSize: 12, color: '#9df' }}>{id}</div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -233,6 +265,7 @@ export default function Admin() {
             const canLoadStage = inLobby && stageCount > 0;
             const canStartCountdown = inIntermission && inPrep;
             const canNextStage = inFinished;
+            const canRestartStage = stageCount > 0 && typeof state?.stageIndex === 'number' && state.stageIndex >= 0;
             const currentStageName = stageCount > 0 && typeof state?.stageIndex === 'number' && state.stageIndex >= 0
               ? (state?.stages?.[state.stageIndex]?.name || state?.stages?.[state.stageIndex]?.id)
               : '-';
@@ -307,6 +340,7 @@ export default function Admin() {
                     {canLoadStage ? 'Load Stage' : canStartCountdown ? 'Start Countdown' : 'Start'}
                   </Button>
                   <Button onClick={() => sendAdmin('endStageNow')} disabled={!inRunning}>End Stage</Button>
+                  <Button onClick={() => sendAdmin('restartStage')} disabled={!canRestartStage}>Restart Stage</Button>
                   <Button onClick={() => sendAdmin('nextStage')} disabled={!canNextStage}>Next Stage</Button>
                   <Button onClick={() => sendAdmin('reset')}>Reset Race</Button>
                   <Button onClick={() => sendAdmin('finish')}>Finish Race</Button>
@@ -345,20 +379,25 @@ export default function Admin() {
             headers={["Name","Spawned","Stage Pts","Total","Radius","Density","Friction","Restitution","Color","Actions"]}
             rows={(players).map((p) => {
               const idx = typeof state?.stageIndex === 'number' ? state.stageIndex : -1;
-              const pts = (p?.results?.[idx]?.points ?? 0);
+              const pts = Number(p?.results?.[idx]?.points ?? 0);
               const col = p?.config?.color || { r: 255, g: 255, b: 255 };
               const swatch = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
               return [
                 p.name,
                 p.spawned ? '✓' : '-',
-                pts,
-                p.totalPoints ?? 0,
+                formatPoints(pts),
+                formatPoints(p.totalPoints ?? 0),
                 (p.config?.radius ?? 0).toFixed(3),
                 (p.config?.density ?? 0).toFixed(1),
                 (p.config?.friction ?? 0).toFixed(2),
                 (p.config?.restitution ?? 0).toFixed(2),
                 <span key="c" title={swatch} style={{ display: 'inline-block', width: 18, height: 18, borderRadius: '50%', border: '3px solid #333', background: swatch }} />,
-                <Button key="remove" onClick={() => sendAdmin('removePlayer', { playerId: p.id })}>Remove</Button>,
+                <div key="actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <Button onClick={() => sendAdmin('respawnPlayer', { playerId: p.id })} disabled={!allowRespawn}>
+                    Respawn
+                  </Button>
+                  <Button onClick={() => sendAdmin('removePlayer', { playerId: p.id })}>Remove</Button>
+                </div>,
               ];
             })}
           />

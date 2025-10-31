@@ -1,6 +1,11 @@
 import React from 'react';
 
-export default function HeaderBar({ title, stageName }: { title: string; stageName: string }) {
+import { safeMultiplier } from '../../utils/points';
+
+export default function HeaderBar({ title, stageName, multiplier = 1 }: { title: string; stageName: string; multiplier?: number }) {
+  const stageMultiplier = safeMultiplier(multiplier, 1);
+  const showMultiplier = Math.abs(stageMultiplier - 1) > 0.001;
+  const stageLabel = showMultiplier ? `${stageName} ×${stageMultiplier.toFixed(1)}` : stageName;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
       <span style={{
@@ -16,8 +21,7 @@ export default function HeaderBar({ title, stageName }: { title: string; stageNa
         letterSpacing: 1.2,
       }}>{title}</span>
       <span style={{ color: '#555' }}>—</span>
-      <span style={{ border: '3px solid #fc6', padding: '2px 8px', color: '#fc6', fontWeight: 900, background: 'rgba(40,30,0,0.35)', boxShadow: '0 0 12px #630' }}>{stageName}</span>
+      <span style={{ border: '3px solid #fc6', padding: '2px 8px', color: '#fc6', fontWeight: 900, background: 'rgba(40,30,0,0.35)', boxShadow: '0 0 12px #630' }}>{stageLabel}</span>
     </div>
   );
 }
-

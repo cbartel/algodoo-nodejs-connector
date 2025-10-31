@@ -308,6 +308,12 @@ export class RaceRoom extends Room<RaceStateSchema> {
         case 'finish':
           this.finishRace();
           break;
+        case 'restartStage':
+          this.restartStage();
+          break;
+        case 'respawnPlayer':
+          this.adminRespawnPlayer(String(data?.playerId || ''));
+          break;
         case 'startCeremony': {
           const dwellMsRaw = (data?.ms != null) ? Number(data.ms) : ((data?.seconds != null) ? Math.round(Number(data.seconds) * 1000) : this.state.ceremonyDwellMs);
           const dwell = Math.max(300, Math.min(60 * 1000, dwellMsRaw | 0));
@@ -550,17 +556,49 @@ export class RaceRoom extends Room<RaceStateSchema> {
     return best;
   }
 
+  private normalizeStageMultiplier(raw: unknown): number {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 1.0;
+    const clamped = Math.max(0.5, Math.min(3.0, n));
+    const snapped = Math.round(clamped * 2) / 2;
+    return Number.isFinite(snapped) && snapped > 0 ? snapped : 1.0;
+  }
+
+  private stageMultiplierFor(stageIdx: number): number {
+    if (!Number.isFinite(stageIdx)) return 1.0;
+    if (stageIdx < 0 || stageIdx >= this.state.stages.length) return 1.0;
+    try {
+      const raw = Number(((this.state.stages as any)[stageIdx]?.multiplier) ?? 1.0);
+      if (Number.isFinite(raw) && raw > 0) {
+        return Math.max(0.1, Math.min(4.0, raw));
+      }
+    } catch {}
+    return 1.0;
+  }
+
+  private multiplyStagePoints(basePoints: number, stageIdx: number): number {
+    const multiplier = this.stageMultiplierFor(stageIdx);
+    const value = basePoints * multiplier;
+    if (!Number.isFinite(value)) return 0;
+    // Clamp to 3 decimal places to avoid floating point noise (supports .5 increments cleanly)
+    return Math.round(value * 1000) / 1000;
+  }
+
   private createRace(data: { stages: StageConfig[]; pointsTable?: number[] }) {
     const stages = (data?.stages ?? []).filter((s) => s && s.id);
     if (stages.length < 1) return;
     // reset stages array
     this.state.stages.splice(0, this.state.stages.length);
+    let totalStageRuns = 0;
     for (const s of stages) {
       const repeats = Math.max(1, Math.min(1000, Number((s as any)?.repeats ?? 1) | 0));
+      const multiplier = this.normalizeStageMultiplier((s as any)?.multiplier);
+      totalStageRuns += repeats;
       for (let i = 0; i < repeats; i++) {
         const ss = new StageSchema();
         ss.id = s.id;
         ss.name = s.name ?? '';
+        ss.multiplier = multiplier;
         this.state.stages.push(ss);
       }
     }
@@ -589,7 +627,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
       p.results.splice(0, p.results.length);
       p.spawned = false;
     });
-    this.pushTicker('race', `Race created: ${stages.length} stage(s)`);
+    this.pushTicker('race', `Race created: ${totalStageRuns} stage(s)`);
   }
 
   private startRace() {
@@ -664,6 +702,47 @@ export class RaceRoom extends Room<RaceStateSchema> {
     }, 1000);
   }
 
+  private restartStage() {
+    const idx = this.state.stageIndex;
+    if (idx < 0 || idx >= this.state.stages.length) {
+      debug('restartStage ignored: no active stage');
+      return;
+    }
+    const stage = this.state.stages[idx];
+    this.pushTicker('stage', `Stage ${idx + 1} restarting`);
+    this.clearTimers();
+    this.finishOrder = [];
+    this.state.countdownMsRemaining = 0;
+    this.state.prepMsRemaining = 0;
+    this.state.postStageMsRemaining = 0;
+    this.state.globalPhase = 'intermission';
+    this.state.stagePhase = 'loading';
+    this.state.ceremonyActive = false;
+    // Clear cheers accumulated during the run being restarted
+    this.state.cheers.splice(0, this.state.cheers.length);
+    this.state.players.forEach((p) => {
+      if (idx < p.results.length) {
+        p.results.splice(idx, 1);
+        for (let i = idx; i < p.results.length; i++) {
+          const res = p.results[i];
+          if (res) res.stageIndex = i;
+        }
+      }
+      p.spawned = false;
+    });
+    this.recomputeAllPlayerStats();
+    this.orchestrator.resetStage(stage.id).catch((err) => {
+      log('restartStage orchestrator reset failed', err);
+    });
+    if (this.loadingReadyFallback) clearTimeout(this.loadingReadyFallback);
+    this.loadingReadyFallback = setTimeout(() => {
+      if (this.state.stagePhase === 'loading' && this.state.stageIndex === idx) {
+        log('fallback: auto stage.ready (restart)');
+        this.handleAlgodooEvent({ type: 'stage.ready', payload: { stageId: stage.id, ts: Date.now() } as any });
+      }
+    }, 1000);
+  }
+
   private setStagePhase(phase: StagePhase) {
     debug('setStagePhase', this.state.stagePhase, '->', phase);
     this.state.stagePhase = phase;
@@ -692,10 +771,10 @@ export class RaceRoom extends Room<RaceStateSchema> {
       const name = this.state.players.get(pid)?.name ?? pid;
       const placement = this.finishOrder.length;
       this.pushTicker('finish', `${name} finished #${placement}`);
-      const points = this.pointsForPlacement(placement);
+      const stageIdx = this.state.stageIndex;
+      const points = this.pointsForPlacement(placement, stageIdx);
       const p = this.state.players.get(pid);
       if (p) {
-        const stageIdx = this.state.stageIndex;
         let res = p.results[stageIdx];
         if (!res) {
           res = new ResultSchema();
@@ -707,9 +786,9 @@ export class RaceRoom extends Room<RaceStateSchema> {
         }
         // accumulate points per marble; keep best (lowest) placement
         if (!res.placement || placement < res.placement) res.placement = placement;
-        res.points = (res.points | 0) + points;
+        res.points = Number(res.points ?? 0) + points;
         res.finishedAt = Date.now();
-        p.totalPoints += points;
+        p.totalPoints = Number(p.totalPoints ?? 0) + points;
         if (placement && (p.bestPlacement === 0 || placement < p.bestPlacement)) {
           p.bestPlacement = placement;
           p.earliestBestStageIndex = stageIdx;
@@ -805,11 +884,11 @@ export class RaceRoom extends Room<RaceStateSchema> {
       const res = new ResultSchema();
       res.stageIndex = stageIdx;
       res.placement = finishedSet.has(p.id) ? (this.finishOrder.indexOf(p.id) + 1) : 0;
-      res.points = res.placement ? this.pointsForPlacement(res.placement) : 0;
+      res.points = res.placement ? this.pointsForPlacement(res.placement, stageIdx) : 0;
       res.finishedAt = res.placement ? Date.now() : 0;
       p.results[stageIdx] = res;
       // totalPoints is only incremented for non-finished players here (should be 0)
-      if (res.points > 0) p.totalPoints += res.points; // safeguard
+      if (res.points > 0) p.totalPoints = Number(p.totalPoints ?? 0) + res.points; // safeguard
     }
     const top = [...players].sort((a, b) => comparePlayers(
       // transform PlayerSchema to protocol-like structure for comparator
@@ -850,6 +929,74 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.prepTimer = undefined;
     if (this.postStageTimer) clearTimeout(this.postStageTimer);
     this.postStageTimer = undefined;
+  }
+
+  private recomputeAllPlayerStats() {
+    this.state.players.forEach((p) => this.recomputePlayerStats(p));
+  }
+
+  private recomputePlayerStats(p: PlayerSchema) {
+    let total = 0;
+    let bestPlacement = 0;
+    let earliestIdx = -1;
+    for (let i = 0; i < p.results.length; i++) {
+      const res = p.results[i];
+      if (!res) continue;
+      const pts = Number(res.points ?? 0);
+      if (Number.isFinite(pts)) total += pts;
+      const placement = Number(res.placement ?? 0);
+      const stageIdx = res.stageIndex >= 0 ? res.stageIndex : i;
+      if (placement > 0) {
+        if (
+          bestPlacement === 0 ||
+          placement < bestPlacement ||
+          (placement === bestPlacement && (earliestIdx === -1 || stageIdx < earliestIdx))
+        ) {
+          bestPlacement = placement;
+          earliestIdx = stageIdx;
+        }
+      }
+    }
+    p.totalPoints = total;
+    p.bestPlacement = bestPlacement;
+    p.earliestBestStageIndex = bestPlacement > 0 ? earliestIdx : -1;
+  }
+
+  private adminRespawnPlayer(playerId: string) {
+    const trimmed = playerId.trim();
+    if (!trimmed) {
+      debug('respawnPlayer ignored: empty id');
+      return;
+    }
+    const p = this.state.players.get(trimmed);
+    if (!p) {
+      debug('respawnPlayer ignored: player not found');
+      return;
+    }
+    const phase = this.state.stagePhase;
+    if (!['prep', 'countdown', 'running'].includes(phase)) {
+      debug('respawnPlayer ignored: invalid phase', phase);
+      return;
+    }
+    const player = {
+      id: p.id,
+      name: p.name,
+      config: {
+        radius: p.config.radius,
+        density: p.config.density,
+        friction: p.config.friction,
+        restitution: p.config.restitution,
+        color: { r: p.config.color.r, g: p.config.color.g, b: p.config.color.b },
+      },
+    };
+    p.spawned = true;
+    this.orchestrator.spawnMarble(player)
+      .then(() => {
+        this.pushTicker('spawn', `${p.name} respawned by admin`);
+      })
+      .catch((err) => {
+        log('admin respawn failed', err);
+      });
   }
 
   private startPrepTimer() {
@@ -927,24 +1074,29 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.orchestrator.handleEvent(ev);
   }
 
-  private pointsForPlacement(placement: number): number {
+  private pointsForPlacement(placement: number, stageIdx = this.state.stageIndex): number {
     if (placement <= 0) return 0;
+    let basePoints = 0;
     // Prefer tiered config if present
-    const idx = placement;
     const ptsTiers: any[] = (this.state as any).pointsTiers || [];
     if (ptsTiers.length > 0) {
       for (let i = 0, acc = 0; i < ptsTiers.length; i++) {
         const t = ptsTiers[i];
+        const count = Math.max(0, Math.floor(Number(t?.count ?? 0)));
         const from = acc + 1;
-        const to = acc + (t.count | 0);
-        if (idx >= from && idx <= to) return t.points | 0;
+        const to = acc + count;
+        if (placement >= from && placement <= to) {
+          basePoints = Number(t?.points ?? 0);
+          break;
+        }
         acc = to;
       }
-      return 0;
+    } else {
+      // Fallback to legacy table by placement index
+      basePoints = Number(this.state.pointsTable[placement - 1] ?? 0);
     }
-    // Fallback to legacy table by placement index
-    const n = this.state.pointsTable[placement - 1];
-    return Number(n ?? 0) | 0;
+    if (!Number.isFinite(basePoints) || basePoints <= 0) return 0;
+    return this.multiplyStagePoints(basePoints, stageIdx);
   }
 
   private requiredFinishers(): number {

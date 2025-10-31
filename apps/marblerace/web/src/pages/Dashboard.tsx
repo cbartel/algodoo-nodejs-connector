@@ -8,12 +8,15 @@ import RewardsCompact from '../components/dashboard/RewardsCompact';
 import StandingsTable from '../components/dashboard/StandingsTable';
 import StatusRow from '../components/dashboard/StatusRow';
 import TickerLatest from '../components/dashboard/TickerLatest';
+import SoundControls from '../components/SoundControls';
+import { useSound } from '../context/SoundProvider';
 import { useNoPageScroll } from '../hooks/useNoPageScroll';
 import { useRewardsPool } from '../hooks/useRewards';
 import { useRoom } from '../hooks/useRoom';
 import { useStandings } from '../hooks/useStandings';
 import { getServerConfig } from '../lib/colyseus';
 import { rgbToHex } from '../utils/color';
+import { formatPoints, safeMultiplier } from '../utils/points';
 import './Dashboard.css';
 
 export default function Dashboard() {
@@ -32,6 +35,7 @@ export default function Dashboard() {
   const [cheerFx, setCheerFx] = useState<{ id: number; icon: string; text: string; color: string; left: number; top: number; playerName: string }[]>([]);
   const seenCheerIdsRef = useRef<Set<number>>(new Set());
   const s: any = room?.state;
+  const { play: playSound } = useSound();
 
   // Prevent page scroll; keep dashboard within one viewport
   useNoPageScroll();
@@ -103,6 +107,7 @@ export default function Dashboard() {
       seenCheerIdsRef.current.add(id);
       setCheerFx((prev) => [...prev, { id, icon, text, color: col, left, top, playerName }]);
       setTimeout(() => setCheerFx((prev) => prev.filter((p) => p.id !== id)), 3600);
+      playSound('cheer');
     } catch { void 0; }
   }
   // Detect per-player stage points increases and spawn bursts
@@ -175,6 +180,7 @@ export default function Dashboard() {
     } catch { void 0; }
     if (newly.length) {
       setClaimBursts((arr) => [...arr, ...newly]);
+      playSound('reward_claim');
       // Schedule auto-remove for each new burst
       newly.forEach((b) => {
         const ttl = 1600 + ((b.id % 4) * 120);
@@ -183,7 +189,7 @@ export default function Dashboard() {
         }, ttl);
       });
     }
-  }, [s, ver]);
+  }, [s, ver, playSound]);
 
   const standings = useStandings(s, ver);
 
@@ -193,6 +199,9 @@ export default function Dashboard() {
   const [lastCeremonyVersion, setLastCeremonyVersion] = useState<number>(-1);
   const [showPodium, setShowPodium] = useState(false);
   const ceremonyList = useMemo(() => standings.slice().reverse(), [standings]);
+  useEffect(() => {
+    if (showPodium) playSound('leaderboard');
+  }, [showPodium, playSound]);
 
   useEffect(() => {
     if (!s) return;
@@ -228,7 +237,9 @@ export default function Dashboard() {
   const link = `${publicBase || window.location.origin}/game`;
   const displayEvents = eventsObs;
   const [goFlash, setGoFlash] = useState(false);
-  const [lastCdMs, setLastCdMs] = useState<number>(0);
+  const lastCountdownMsRef = useRef<number>(0);
+  const lastCountdownRef = useRef<number | null>(null);
+  const lastStagePhaseRef = useRef<string | null>(null);
   const isPostStageOverlay = (s?.stagePhase === 'stage_finished') && (Number(s?.postStageMsRemaining || 0) > 0);
   // Resizable split between Standings (left) and Preview (right)
   const splitRef = useRef<HTMLDivElement | null>(null);
@@ -315,13 +326,29 @@ export default function Dashboard() {
   };
   useEffect(() => {
     const ms = Number(s?.countdownMsRemaining || 0);
+    const sec = Math.max(0, Math.ceil(ms / 1000));
+    const prevSec = lastCountdownRef.current;
+    if (prevSec != null && sec < prevSec) {
+      if (sec > 0) playSound('countdown_tick');
+      else if (prevSec > 0) playSound('countdown_go');
+    }
+    lastCountdownRef.current = sec;
     // detect transition from counting (>0) to go (<=0)
-    if (lastCdMs > 0 && ms <= 0) {
+    if (lastCountdownMsRef.current > 0 && ms <= 0) {
       setGoFlash(true);
       setTimeout(() => setGoFlash(false), 900);
     }
-    setLastCdMs(ms);
-  }, [s?.countdownMsRemaining]);
+    lastCountdownMsRef.current = ms;
+  }, [s?.countdownMsRemaining, playSound]);
+  useEffect(() => {
+    const phase = String(s?.stagePhase || '');
+    const prev = lastStagePhaseRef.current;
+    if (prev && prev !== phase) {
+      if (phase === 'prep' || phase === 'running') playSound('stage_transition');
+      if (phase === 'stage_finished') playSound('leaderboard');
+    }
+    lastStagePhaseRef.current = phase;
+  }, [s?.stagePhase, playSound]);
 
   // Compute Top 3 scorers for the current stage (by stage points desc)
   const top3 = useMemo(() => {
@@ -542,7 +569,7 @@ export default function Dashboard() {
                     <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                       <div style={{ fontSize: i===0 ? 40 : 32, marginBottom: 6 }}>{medal}</div>
                       <div style={{ fontWeight: 900, fontSize: i===0 ? 28 : 22, color: accent, textShadow: '0 2px 0 #000' }}>{p.name}</div>
-                      <div style={{ fontSize: 14, color: '#cde', marginTop: 2 }}>Total: {p.total}</div>
+                      <div style={{ fontSize: 14, color: '#cde', marginTop: 2 }}>Total: {formatPoints(p.total)}</div>
                       <div style={{ width: 120, height: height, background: '#16212a', border: `4px solid ${accent}`, boxShadow: `0 0 0 2px #000 inset, 0 6px 18px ${accent}55`, marginTop: 8 }} />
                     </div>
                   );
@@ -569,14 +596,19 @@ export default function Dashboard() {
             <div style={{ fontSize: 72, fontWeight: 900, color: '#fc6', textShadow: '0 0 12px #630', marginBottom: 12 }}>
               {Math.max(0, Math.ceil((s?.postStageMsRemaining || 0) / 1000))}
             </div>
-            <div style={{ fontSize: 16, color: '#9df', marginBottom: 8 }}>Top 3 (Stage Points)</div>
+            {(() => {
+              const idx = typeof s?.stageIndex === 'number' ? s.stageIndex : -1;
+              const m = safeMultiplier(idx >= 0 ? s?.stages?.[idx]?.multiplier : 1, 1);
+              const label = Math.abs(m - 1) > 0.001 ? `Top 3 (Stage Points ×${m.toFixed(1)})` : 'Top 3 (Stage Points)';
+              return <div style={{ fontSize: 16, color: '#9df', marginBottom: 8 }}>{label}</div>;
+            })()}
             <ol style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               {top3.map((t, i) => (
                 <li key={i} style={{ fontSize: 20, color: i===0 ? '#ffd700' : i===1 ? '#c0c0c0' : '#cd7f32', margin: '4px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span>{i+1}.</span>
                   <span title="player color" style={{ width: 14, height: 14, borderRadius: '50%', border: '3px solid #333', display: 'inline-block', background: t.colorHex }} />
                   <span>{t.name}</span>
-                  <span>{t.points ? `(+${t.points})` : ''}</span>
+                  <span>{t.points ? `(+${formatPoints(t.points)})` : ''}</span>
                 </li>
               ))}
             </ol>
@@ -587,6 +619,7 @@ export default function Dashboard() {
       {(() => {
         const idx = typeof s?.stageIndex === 'number' ? s.stageIndex : -1;
         const stageName = idx >= 0 ? (s?.stages?.[idx]?.name || s?.stages?.[idx]?.id) : '-';
+        const stageMultiplier = safeMultiplier(idx >= 0 ? s?.stages?.[idx]?.multiplier : 1, 1);
         const playlistId = String((s)?.spotifyPlaylistId || '').trim();
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 420px', gap: 12, alignItems: 'stretch', height: 'calc(100vh - 32px)' }}>
@@ -624,8 +657,13 @@ export default function Dashboard() {
               )}
             </div>
             <div style={{ display: 'grid', gridTemplateRows: 'auto auto auto 1fr auto auto', gap: 12, minHeight: 0, minWidth: 0 }}>
-              <HeaderBar title={String(s?.title || 'Marble Race')} stageName={stageName} />
-              <StatusRow s={s} />
+              <HeaderBar title={String(s?.title || 'Marble Race')} stageName={stageName} multiplier={stageMultiplier} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                  <StatusRow s={s} />
+                </div>
+                <SoundControls compact />
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 12, minWidth: 0 }}>
                 <TickerLatest line={displayEvents[0] || null} players={buildPlayerColorMap(s)} width={300} height={96} />
                 <div style={{ height: 96, display: 'flex', alignItems: 'center' }}>
@@ -635,7 +673,7 @@ export default function Dashboard() {
               {null}
               <div style={{ display: 'grid', gridTemplateRows: '1fr 84px', minHeight: 0, gap: 8, minWidth: 0 }}>
                 <StandingsTable standings={standings as any} nameRefs={nameRefs as any} tableRef={standingsRef as any} />
-                <RewardsCompact pool={rewards.pool} remaining={rewards.remaining} />
+                <RewardsCompact pool={rewards.pool} remaining={rewards.remaining} multiplier={rewards.multiplier} />
               </div>
               {playlistId && (
                 <div>
