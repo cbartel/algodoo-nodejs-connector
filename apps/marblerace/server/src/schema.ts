@@ -72,6 +72,10 @@ export class PlayerSchema extends Schema {
   @colyseusType('string') name = '';
   @colyseusType(ConfigSchema) config = new ConfigSchema();
   @colyseusType('boolean') spawned = false;
+  @colyseusType('string') abilityId: 'extra_spawn' = 'extra_spawn';
+  @colyseusType('number') abilityCharge = 0;
+  @colyseusType('number') abilityChargeFactor = 1;
+  @colyseusType('boolean') extraSpawnActive = false;
   @colyseusType('number') totalPoints = 0;
   @colyseusType('int16') bestPlacement = 0; // 0 => none
   @colyseusType('int16') earliestBestStageIndex = -1;

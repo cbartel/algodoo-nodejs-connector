@@ -1,6 +1,7 @@
 import { Button, Panel, Table, Badge } from 'marblerace-ui-kit';
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { PLAYER_ABILITY_MAX_CHARGES } from 'marblerace-protocol';
 import AdminAutoAdvanceSettings from '../components/admin/AdminAutoAdvanceSettings';
 import AdminCeremonySettings from '../components/admin/AdminCeremonySettings';
 import AdminMultiplierSettings from '../components/admin/AdminMultiplierSettings';
@@ -21,6 +22,7 @@ export default function Admin() {
   const [stageNames, setStageNames] = useState<Record<string, string>>({});
   const [stageRepeats, setStageRepeats] = useState<Record<string, number>>({});
   const [stageMultipliers, setStageMultipliers] = useState<Record<string, number>>({});
+  const [pointDeltaDrafts, setPointDeltaDrafts] = useState<Record<string, string>>({});
   const { token, setToken } = useAdminToken();
   const pingInfo = usePingInfo();
   const [titleDraft, setTitleDraft] = useState<string>('');
@@ -71,6 +73,23 @@ export default function Admin() {
     if (!room) return;
     const auth = (token || '').trim();
     room.send('admin', { token: auth, action, data });
+  }
+
+  function setPointDelta(playerId: string, value: string) {
+    setPointDeltaDrafts((prev) => ({ ...prev, [playerId]: value }));
+  }
+
+  function applyPointDelta(player: any) {
+    if (!player?.id) return;
+    const draft = pointDeltaDrafts[player.id] ?? '';
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    const delta = Number(trimmed);
+    if (!Number.isFinite(delta) || delta === 0) return;
+    const current = Number(player.totalPoints ?? 0);
+    const nextTotal = current + delta;
+    sendAdmin('setPlayerTotalPoints', { playerId: player.id, totalPoints: nextTotal });
+    setPointDeltaDrafts((prev) => ({ ...prev, [player.id]: '' }));
   }
 
   function parseTiers(text: string): { count: number; points: number }[] {
@@ -376,23 +395,71 @@ export default function Admin() {
       <Panel title="Players">
         <div style={{ overflowX: 'auto' }}>
           <Table
-            headers={["Name","Spawned","Stage Pts","Total","Radius","Density","Friction","Restitution","Color","Actions"]}
+            headers={["Name","Spawned","Stage Pts","Total","Radius","Density","Friction","Restitution","Color","Charge ×","Actions"]}
             rows={(players).map((p) => {
               const idx = typeof state?.stageIndex === 'number' ? state.stageIndex : -1;
               const pts = Number(p?.results?.[idx]?.points ?? 0);
               const col = p?.config?.color || { r: 255, g: 255, b: 255 };
               const swatch = `#${(col.r|0).toString(16).padStart(2,'0')}${(col.g|0).toString(16).padStart(2,'0')}${(col.b|0).toString(16).padStart(2,'0')}`;
+              const abilityCharge = Math.max(0, Number(p?.abilityCharge ?? 0));
+              const abilityChargeRounded = Math.round(abilityCharge * 100) / 100;
+              const abilityDisabled = abilityCharge >= PLAYER_ABILITY_MAX_CHARGES;
+              const abilityFactor = Number.isFinite(p?.abilityChargeFactor) ? Number(p.abilityChargeFactor) : 1;
+              const abilityFactorText = abilityFactor.toFixed(2);
+              const totalPoints = Number(p?.totalPoints ?? 0);
+              const deltaDraft = pointDeltaDrafts[p.id] ?? '';
+              const parsedDelta = Number(deltaDraft);
+              const deltaValid = deltaDraft.trim().length > 0 && Number.isFinite(parsedDelta) && parsedDelta !== 0;
               return [
                 p.name,
                 p.spawned ? '✓' : '-',
                 formatPoints(pts),
-                formatPoints(p.totalPoints ?? 0),
+                <div key="tp" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span title={`${totalPoints}`}>{formatPoints(totalPoints)}</span>
+                  <input
+                    type="number"
+                    step="1"
+                    value={deltaDraft}
+                    onChange={(e) => setPointDelta(p.id, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        applyPointDelta(p);
+                      }
+                    }}
+                    style={{ width: 72, padding: '4px 6px', border: '3px solid #333', background: '#14161b', color: '#fff', borderRadius: 6 }}
+                    placeholder="∆"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => applyPointDelta(p)}
+                    disabled={!deltaValid}
+                    style={{
+                      padding: '4px 8px',
+                      border: '3px solid #6cf',
+                      background: deltaValid ? '#0f1824' : '#2a2a2a',
+                      color: deltaValid ? '#9df' : '#666',
+                      cursor: deltaValid ? 'pointer' : 'not-allowed',
+                      borderRadius: 6,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Apply
+                  </button>
+                </div>,
                 (p.config?.radius ?? 0).toFixed(3),
                 (p.config?.density ?? 0).toFixed(1),
                 (p.config?.friction ?? 0).toFixed(2),
                 (p.config?.restitution ?? 0).toFixed(2),
                 <span key="c" title={swatch} style={{ display: 'inline-block', width: 18, height: 18, borderRadius: '50%', border: '3px solid #333', background: swatch }} />,
+                <span key="f" title="Charge generation multiplier">{abilityFactorText}</span>,
                 <div key="actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <Badge tone={abilityDisabled ? 'info' : 'neutral'} title={`Charges: ${abilityChargeRounded}/${PLAYER_ABILITY_MAX_CHARGES}`}>
+                    Ult {abilityChargeRounded}/{PLAYER_ABILITY_MAX_CHARGES}
+                  </Badge>
+                  <Button onClick={() => sendAdmin('grantAbilityCharge', { playerId: p.id })} disabled={abilityDisabled}>
+                    +Charge
+                  </Button>
                   <Button onClick={() => sendAdmin('respawnPlayer', { playerId: p.id })} disabled={!allowRespawn}>
                     Respawn
                   </Button>

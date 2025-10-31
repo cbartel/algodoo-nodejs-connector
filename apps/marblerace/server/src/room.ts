@@ -8,6 +8,9 @@ import {
   comparePlayers,
   type MarbleConfig,
   clampRanges,
+  playerAbilityById,
+  type PlayerAbilityId,
+  PLAYER_ABILITY_MAX_CHARGES,
 } from 'marblerace-protocol';
 
 import { Orchestrator } from './orchestrator.js';
@@ -30,6 +33,8 @@ const LOG_LEVEL = process.env.MARBLERACE_LOG || 'info';
 const log = (...args: unknown[]) => console.log('[mr:room]', ...args);
 const debug = (...args: unknown[]) => { if (LOG_LEVEL === 'debug') console.log('[mr:room]', ...args); };
 
+const DEFAULT_ABILITY: PlayerAbilityId = 'extra_spawn';
+
 /**
  * Colyseus room coordinating Marble Race game state and lifecycle.
  *
@@ -51,6 +56,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
   private postStageTimer?: NodeJS.Timeout;
   private finishOrder: string[] = []; // playerIds per stage
   private lastCheerAt = new Map<string, number>();
+  private pendingAbilityUses = new Set<string>();
 
   // Simple admin guard via env token
   // Default aligns with README; empty string disables auth (not recommended)
@@ -158,9 +164,16 @@ export class RaceRoom extends Room<RaceStateSchema> {
         ps.config.color.b = validColor ? Math.max(0, Math.min(255, c.b|0)) : defaultMarbleConfig.color.b;
         this.state.players.set(id, ps);
         this.pushTicker('join', `${name} joined lobby`);
+        ps.abilityId = DEFAULT_ABILITY;
+        ps.abilityCharge = 0;
+        ps.abilityChargeFactor = 1;
+        ps.extraSpawnActive = false;
       } else {
         const ps = this.state.players.get(id)!;
         ps.name = name;
+        if (!ps.abilityId) ps.abilityId = DEFAULT_ABILITY;
+        if (!Number.isFinite(ps.abilityCharge as unknown as number)) ps.abilityCharge = 0;
+        if (!Number.isFinite(ps.abilityChargeFactor as unknown as number)) ps.abilityChargeFactor = 1;
         const c = (payload as any)?.color;
         if (c && Number.isFinite(c.r) && Number.isFinite(c.g) && Number.isFinite(c.b)) {
           // If enforcing unique colors and incoming color is too similar, ignore update and notify
@@ -174,6 +187,61 @@ export class RaceRoom extends Room<RaceStateSchema> {
         }
       }
       cd.playerId = id;
+    });
+
+    this.onMessage('setAbility', (client: Client, payload: { id?: PlayerAbilityId }) => {
+      const abilityId = String(payload?.id || '').trim() as PlayerAbilityId;
+      if (!abilityId || !playerAbilityById[abilityId]) return;
+      const cd = this.getClientData(client);
+      const pid = cd?.playerId || client.sessionId;
+      const p = this.state.players.get(pid);
+      if (!p) return;
+      const gp = this.state.globalPhase;
+      const sp = this.state.stagePhase;
+      const canChoose = gp === 'lobby' || (gp === 'intermission' && sp === 'prep');
+      if (!canChoose) { debug('setAbility denied: bad phase', { gp, sp }); return; }
+      if (p.spawned) { debug('setAbility denied: already spawned'); return; }
+      if (p.abilityId === abilityId) return;
+      p.abilityId = abilityId;
+    });
+
+    this.onMessage('useAbility', (client: Client) => {
+      const cd = this.getClientData(client);
+      const pid = cd?.playerId || client.sessionId;
+      const p = this.state.players.get(pid);
+      if (!p) return;
+      if ((p.abilityId || DEFAULT_ABILITY) !== DEFAULT_ABILITY) { debug('useAbility ignored: unsupported ability', p.abilityId); return; }
+      if (!p.spawned) { debug('useAbility denied: player not spawned'); return; }
+      const charge = Number(p.abilityCharge ?? 0);
+      if (!Number.isFinite(charge) || charge < 1 - 1e-3) { debug('useAbility denied: not enough charge', charge); return; }
+      const sp = this.state.stagePhase;
+      if (!['prep', 'countdown', 'running'].includes(sp)) { debug('useAbility denied: wrong phase', sp); return; }
+      if (this.pendingAbilityUses.has(p.id)) { debug('useAbility throttled: pending cast'); return; }
+      this.pendingAbilityUses.add(p.id);
+      const payload = {
+        id: p.id,
+        name: p.name,
+        config: {
+          radius: p.config.radius,
+          density: p.config.density,
+          friction: p.config.friction,
+          restitution: p.config.restitution,
+          color: { r: p.config.color.r, g: p.config.color.g, b: p.config.color.b },
+        },
+      };
+      this.orchestrator.spawnMarble(payload)
+        .then(() => {
+          const prevCharge = Number(p.abilityCharge ?? 0);
+          p.abilityCharge = Math.max(0, prevCharge - 1);
+          p.extraSpawnActive = true;
+          this.pushTicker('ability', `${p.name} used Extra Spawn!`);
+        })
+        .catch((err) => {
+          log('ability use failed', err);
+        })
+        .finally(() => {
+          this.pendingAbilityUses.delete(p.id);
+        });
     });
 
     this.onMessage('setConfig', (client: Client, payload: { partial: Partial<{ radius: number; density: number; friction: number; restitution: number; color: { r: number; g: number; b: number } }> }) => {
@@ -313,6 +381,22 @@ export class RaceRoom extends Room<RaceStateSchema> {
           break;
         case 'respawnPlayer':
           this.adminRespawnPlayer(String(data?.playerId || ''));
+          break;
+        case 'setPlayerTotalPoints': {
+          const pid = String(data?.playerId || '').trim();
+          const total = Number(data?.totalPoints);
+          if (!pid) { debug('setPlayerTotalPoints ignored: empty id'); break; }
+          if (!Number.isFinite(total)) { debug('setPlayerTotalPoints ignored: invalid total', total); break; }
+          const p = this.state.players.get(pid);
+          if (!p) { debug('setPlayerTotalPoints ignored: player not found'); break; }
+          const prev = Number(p.totalPoints ?? 0);
+          p.totalPoints = total;
+          this.updateAbilityChargeFactors();
+          this.pushTicker('admin', `${p.name} total points set to ${total} (was ${prev})`);
+          break;
+        }
+        case 'grantAbilityCharge':
+          this.adminGrantAbilityCharge(String(data?.playerId || ''), Number(data?.amount));
           break;
         case 'startCeremony': {
           const dwellMsRaw = (data?.ms != null) ? Number(data.ms) : ((data?.seconds != null) ? Math.round(Number(data.seconds) * 1000) : this.state.ceremonyDwellMs);
@@ -660,7 +744,12 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.state.globalPhase = 'lobby';
     this.state.stagePhase = 'loading';
     this.state.stageIndex = -1;
-    this.state.players.forEach((p) => { p.spawned = false; });
+    this.state.players.forEach((p) => {
+      p.spawned = false;
+      p.abilityCharge = 0;
+      p.extraSpawnActive = false;
+    });
+    this.pendingAbilityUses.clear();
     this.pushTicker('race', 'Race reset');
   }
 
@@ -686,7 +775,11 @@ export class RaceRoom extends Room<RaceStateSchema> {
     this.state.stagePhase = 'loading';
     this.state.globalPhase = 'intermission';
     // Reset per-player spawned flags for the next stage
-    this.state.players.forEach((p) => { p.spawned = false; });
+    this.state.players.forEach((p) => {
+      p.spawned = false;
+      p.extraSpawnActive = false;
+    });
+    this.pendingAbilityUses.clear();
     // Preparing next stage, race continues -> move to countdown soon
     this.finishOrder = [];
     this.pushTicker('stage', `Loading stage ${next + 1}/${this.state.stages.length}`);
@@ -729,8 +822,10 @@ export class RaceRoom extends Room<RaceStateSchema> {
         }
       }
       p.spawned = false;
+      p.extraSpawnActive = false;
     });
     this.recomputeAllPlayerStats();
+    this.pendingAbilityUses.clear();
     this.orchestrator.resetStage(stage.id).catch((err) => {
       log('restartStage orchestrator reset failed', err);
     });
@@ -747,6 +842,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
     debug('setStagePhase', this.state.stagePhase, '->', phase);
     this.state.stagePhase = phase;
     if (phase === 'prep') {
+      this.resetAbilityFlagsForPrep();
       this.startPrepTimer();
     } else {
       this.state.prepMsRemaining = 0;
@@ -774,26 +870,7 @@ export class RaceRoom extends Room<RaceStateSchema> {
       const stageIdx = this.state.stageIndex;
       const points = this.pointsForPlacement(placement, stageIdx);
       const p = this.state.players.get(pid);
-      if (p) {
-        let res = p.results[stageIdx];
-        if (!res) {
-          res = new ResultSchema();
-          res.stageIndex = stageIdx;
-          res.placement = placement; // best placement so far
-          res.points = 0;
-          res.finishedAt = 0;
-          p.results[stageIdx] = res;
-        }
-        // accumulate points per marble; keep best (lowest) placement
-        if (!res.placement || placement < res.placement) res.placement = placement;
-        res.points = Number(res.points ?? 0) + points;
-        res.finishedAt = Date.now();
-        p.totalPoints = Number(p.totalPoints ?? 0) + points;
-        if (placement && (p.bestPlacement === 0 || placement < p.bestPlacement)) {
-          p.bestPlacement = placement;
-          p.earliestBestStageIndex = stageIdx;
-        }
-      }
+      if (p) this.applyStagePoints(p, stageIdx, placement, points, Date.now());
       // Short-circuit end only when all awardable points have been assigned
       const required = this.requiredFinishers();
       if (required > 0 && this.finishOrder.length >= required) this.endStage(false);
@@ -881,14 +958,10 @@ export class RaceRoom extends Room<RaceStateSchema> {
     for (const p of players) {
       const existing = p.results[stageIdx];
       if (existing && (existing.placement || existing.placement === 0)) continue;
-      const res = new ResultSchema();
-      res.stageIndex = stageIdx;
-      res.placement = finishedSet.has(p.id) ? (this.finishOrder.indexOf(p.id) + 1) : 0;
-      res.points = res.placement ? this.pointsForPlacement(res.placement, stageIdx) : 0;
-      res.finishedAt = res.placement ? Date.now() : 0;
-      p.results[stageIdx] = res;
-      // totalPoints is only incremented for non-finished players here (should be 0)
-      if (res.points > 0) p.totalPoints = Number(p.totalPoints ?? 0) + res.points; // safeguard
+      const placement = finishedSet.has(p.id) ? (this.finishOrder.indexOf(p.id) + 1) : 0;
+      const pts = placement ? this.pointsForPlacement(placement, stageIdx) : 0;
+      const ts = placement ? Date.now() : 0;
+      this.applyStagePoints(p, stageIdx, placement, pts, ts);
     }
     const top = [...players].sort((a, b) => comparePlayers(
       // transform PlayerSchema to protocol-like structure for comparator
@@ -997,6 +1070,162 @@ export class RaceRoom extends Room<RaceStateSchema> {
       .catch((err) => {
         log('admin respawn failed', err);
       });
+  }
+
+  private adminGrantAbilityCharge(playerId: string, amountRaw?: number) {
+    const trimmed = playerId.trim();
+    if (!trimmed) {
+      debug('grantAbilityCharge ignored: empty id');
+      return;
+    }
+    const p = this.state.players.get(trimmed);
+    if (!p) {
+      debug('grantAbilityCharge ignored: player not found');
+      return;
+    }
+    const abilityId = p.abilityId || DEFAULT_ABILITY;
+    if (abilityId !== DEFAULT_ABILITY) {
+      debug('grantAbilityCharge ignored: unsupported ability', abilityId);
+      return;
+    }
+    const amount = Number.isFinite(amountRaw) ? Math.max(0, Number(amountRaw)) : 1;
+    if (amount <= 0) {
+      debug('grantAbilityCharge ignored: non-positive amount');
+      return;
+    }
+    const before = Math.max(0, Number(p.abilityCharge ?? 0));
+    if (before >= PLAYER_ABILITY_MAX_CHARGES) {
+      debug('grantAbilityCharge ignored: already at cap', before);
+      return;
+    }
+    const after = Math.min(PLAYER_ABILITY_MAX_CHARGES, before + amount);
+    p.abilityCharge = after;
+    this.pushTicker('ability', `${p.name} granted ability charge (${after}/${PLAYER_ABILITY_MAX_CHARGES})`);
+  }
+
+  private resetAbilityFlagsForPrep() {
+    this.state.players.forEach((p) => {
+      p.extraSpawnActive = false;
+    });
+    this.pendingAbilityUses.clear();
+  }
+
+  private countPlayers(): number {
+    let count = 0;
+    this.state.players.forEach(() => { count += 1; });
+    return count;
+  }
+
+  private abilityChargeRequirement(): number {
+    const players = this.countPlayers();
+    if (players <= 1) return Number.POSITIVE_INFINITY;
+    const base = 120;
+    const perPlayer = 40;
+    return base + perPlayer * Math.max(0, players - 1);
+  }
+
+  private grantAbilityCharge(scoringPlayerId: string, points: number) {
+    if (!Number.isFinite(points) || points <= 0) return;
+    const requirement = this.abilityChargeRequirement();
+    if (!Number.isFinite(requirement) || requirement <= 0) return;
+    const baseDelta = points / requirement;
+    if (baseDelta <= 0) return;
+    const factorForId = this.updateAbilityChargeFactors();
+    this.state.players.forEach((p) => {
+      if (!p) return;
+      if (p.id === scoringPlayerId) return;
+      const abilityId = p.abilityId || DEFAULT_ABILITY;
+      if (abilityId !== DEFAULT_ABILITY) return;
+      const factor = factorForId.get(p.id) ?? 1;
+      const delta = baseDelta * factor;
+      if (delta <= 0) return;
+      const before = Number(p.abilityCharge ?? 0);
+      const after = Math.min(PLAYER_ABILITY_MAX_CHARGES, before + delta);
+      p.abilityCharge = after;
+      const beforeBuckets = Math.floor(before);
+      const afterBuckets = Math.floor(after);
+      if (afterBuckets > beforeBuckets) {
+        this.pushTicker('ability', `${p.name} ultimate ready (${afterBuckets}x)`);
+      }
+    });
+  }
+
+  private updateAbilityChargeFactors(): Map<string, number> {
+    const players = [...this.state.players.values()].filter(Boolean);
+    const factorForId = new Map<string, number>();
+    const baselineMin = 0.8;
+    const baselineMax = 1.2;
+    const extremeMin = 0.1;
+    const extremeMax = 2.5;
+    const extremeThreshold = 150;
+    const padding = 0.05;
+    const curvature = 2.0;
+    if (players.length === 0) return factorForId;
+    const totals = players.map((p) => Number(p.totalPoints ?? 0));
+    const maxTotal = Math.max(...totals);
+    const minTotal = Math.min(...totals);
+    if (!Number.isFinite(maxTotal) || maxTotal === minTotal) {
+      players.forEach((p) => {
+        p.abilityChargeFactor = 1;
+        factorForId.set(p.id, 1);
+      });
+      return factorForId;
+    }
+    const range = maxTotal - minTotal;
+    const t = Math.max(0, Math.min(1, range / extremeThreshold));
+    const minFactor = baselineMin + (extremeMin - baselineMin) * t;
+    const maxFactor = baselineMax + (extremeMax - baselineMax) * t;
+
+    players.forEach((p) => {
+      const total = Number(p.totalPoints ?? 0);
+      let r = (total - minTotal) / range;
+      r = Math.max(0, Math.min(1, r));
+      r = padding + (1 - 2 * padding) * r;
+      r = Math.max(0, Math.min(1, r));
+      const s = Math.pow(r, curvature);
+      const factor = Math.max(minFactor, Math.min(maxFactor, maxFactor + (minFactor - maxFactor) * s));
+      p.abilityChargeFactor = factor;
+      factorForId.set(p.id, factor);
+    });
+    return factorForId;
+  }
+
+  private applyStagePoints(player: PlayerSchema, stageIdx: number, placement: number, points: number, finishedAt: number) {
+    let res = player.results[stageIdx];
+    if (!res) {
+      res = new ResultSchema();
+      res.stageIndex = stageIdx;
+      player.results[stageIdx] = res;
+    }
+    if (placement > 0) {
+      if (!res.placement || placement < res.placement || res.placement === 0) {
+        res.placement = placement;
+      }
+    } else if (!res.placement) {
+      res.placement = 0;
+    }
+    if (!Number.isFinite(res.points as unknown as number)) {
+      res.points = 0;
+    }
+    if (points > 0) {
+      const prevPoints = Number(res.points ?? 0);
+      res.points = prevPoints + points;
+      player.totalPoints = Number(player.totalPoints ?? 0) + points;
+      if (placement > 0) {
+        if (
+          player.bestPlacement === 0 ||
+          placement < player.bestPlacement ||
+          (placement === player.bestPlacement && (player.earliestBestStageIndex === -1 || stageIdx < player.earliestBestStageIndex))
+        ) {
+          player.bestPlacement = placement;
+          player.earliestBestStageIndex = stageIdx;
+        }
+      }
+      this.grantAbilityCharge(player.id, points);
+    }
+    if (finishedAt && (!res.finishedAt || finishedAt < res.finishedAt)) {
+      res.finishedAt = finishedAt;
+    }
   }
 
   private startPrepTimer() {

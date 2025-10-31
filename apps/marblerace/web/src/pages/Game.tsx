@@ -1,5 +1,5 @@
 /* eslint-env browser */
-import { clampRanges as defaultClampRanges, defaultMarbleConfig } from 'marblerace-protocol';
+import { clampRanges as defaultClampRanges, defaultMarbleConfig, playerAbilities, playerAbilityById, PLAYER_ABILITY_MAX_CHARGES, type PlayerAbilityId } from 'marblerace-protocol';
 import { Button, Panel } from 'marblerace-ui-kit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -38,6 +38,11 @@ export default function Game() {
   const stagePhaseRef = useRef<string | null>(null);
   const spawnedRef = useRef<boolean>(false);
   const spawnInitRef = useRef<boolean>(true);
+  const abilityReadyCountRef = useRef(0);
+  const abilityReadyFirstLineRef = useRef('');
+  const abilityUsedCountRef = useRef(0);
+  const abilityUsedFirstLineRef = useRef('');
+  const lastAbilityLocalRef = useRef(0);
   useEffect(() => {
     try {
       const raw = localStorage.getItem('mr_cheers_v2');
@@ -106,6 +111,18 @@ export default function Game() {
     }
     localStorage.setItem('mr_name', name);
     room.send('join', { name, playerKey: playerKeyRef.current, color: { r: config.color.r|0, g: config.color.g|0, b: config.color.b|0 } });
+  }
+
+  function handleAbilitySelect(id: PlayerAbilityId) {
+    if (!room || !canChooseAbility) return;
+    room.send('setAbility', { id });
+  }
+
+  function triggerAbility() {
+    if (!room || abilityButtonDisabled) return;
+    lastAbilityLocalRef.current = Date.now();
+    playSound('ultimate_cast');
+    room.send('useAbility', {});
   }
 
 
@@ -321,6 +338,111 @@ export default function Game() {
     }
   }, [state]);
   const playersCount = playersArr.length;
+  const hasActiveRace = typeof state?.stageIndex === 'number' && state.stageIndex >= 0;
+  const abilityId = ((me?.abilityId as PlayerAbilityId) || 'extra_spawn') as PlayerAbilityId;
+  const abilityDef = playerAbilityById[abilityId] ?? playerAbilities[0];
+  const abilityChargeRaw = Math.max(0, Math.min(Number(me?.abilityCharge ?? 0), PLAYER_ABILITY_MAX_CHARGES));
+  const abilityChargesBanked = Math.floor(abilityChargeRaw);
+  const abilityChargeFractionRaw = Math.max(0, abilityChargeRaw - abilityChargesBanked);
+  const abilityNextFraction = abilityChargesBanked >= PLAYER_ABILITY_MAX_CHARGES ? 1 : Math.min(1, abilityChargeFractionRaw);
+  const abilityProgress = abilityNextFraction;
+  const abilityChargePct = Math.round(abilityNextFraction * 100);
+  const abilityActive = !!me?.extraSpawnActive;
+  const abilityChargeFactor = Number.isFinite(me?.abilityChargeFactor) ? Number(me?.abilityChargeFactor) : 1;
+  const abilityPhaseVisible = inPrep || inCountdown || inRunning || inFinished;
+  const abilityPhaseAllowed = ['prep', 'countdown', 'running'].includes(String(state?.stagePhase || ''));
+  const abilityReady = hasActiveRace && abilityChargesBanked > 0 && abilityPhaseAllowed && !!me?.spawned;
+  const abilityButtonDisabled = !abilityReady;
+  const abilityChargesLabel = abilityChargesBanked > 0
+    ? `Stored: ${abilityChargesBanked}/${PLAYER_ABILITY_MAX_CHARGES}${abilityChargesBanked >= PLAYER_ABILITY_MAX_CHARGES ? ' (maxed)' : abilityChargePct > 0 ? ` • Next +${abilityChargePct}%` : ''}`
+    : `Stored: 0/${PLAYER_ABILITY_MAX_CHARGES}`;
+  const abilityChargeRateText = abilityChargeFactor > 1.01
+    ? `Boost ${abilityChargeFactor.toFixed(2)}×`
+    : abilityChargeFactor < 0.99
+      ? `Malus ${abilityChargeFactor.toFixed(2)}×`
+      : 'Neutral 1.00×';
+  const abilityStatusText = !hasActiveRace
+    ? 'Awaiting race start'
+    : abilityChargesBanked >= PLAYER_ABILITY_MAX_CHARGES
+      ? 'Fully charged'
+      : abilityReady
+        ? (abilityChargePct > 0 ? `Ready • Next charge ${abilityChargePct}%` : 'Ready • Next charge pending')
+        : `Charging • ${abilityChargePct}% to next`;
+  const abilityCantReason = !hasActiveRace
+    ? 'No active race yet'
+    : !me?.spawned
+      ? 'Spawn before using'
+      : abilityChargesBanked <= 0
+        ? 'Charge by letting rivals score'
+        : !abilityPhaseAllowed
+          ? 'Unavailable in this phase'
+          : '';
+  const abilityProgressDeg = Math.max(0, Math.min(1, abilityProgress)) * 360;
+  const abilityRingColor = abilityChargesBanked >= PLAYER_ABILITY_MAX_CHARGES
+    ? '#b6ff87'
+    : abilityReady ? '#4ec9ff' : '#2e465d';
+  const abilityRingTrack = abilityChargesBanked >= PLAYER_ABILITY_MAX_CHARGES
+    ? 'rgba(36,64,20,0.75)'
+    : 'rgba(20,27,36,0.6)';
+  const abilityRingStyle = useMemo(() => ({
+    background: `conic-gradient(${abilityRingColor} ${abilityProgressDeg}deg, ${abilityRingTrack} ${abilityProgressDeg}deg)`,
+  }), [abilityProgressDeg, abilityRingColor, abilityRingTrack]);
+  const canChooseAbility = hasActiveRace && ((inLobby || (inIntermission && inPrep)) && !me?.spawned);
+  const canCheer = !!me?.spawned && ((state?.globalPhase === 'intermission' && inPrep) || inRunning || inCountdown || inFinished);
+  const showAbilityMeter = hasActiveRace && abilityPhaseVisible && !!me;
+  const showAbilitySection = showAbilityMeter || canCheer;
+
+  const tickerLines = useMemo(() => {
+    const out: string[] = [];
+    const raw: any = state?.ticker;
+    try {
+      if (raw && typeof raw.forEach === 'function') {
+        raw.forEach((v: any) => out.push(String(v)));
+      } else if (Array.isArray(raw)) {
+        out.push(...raw.map((v: any) => String(v)));
+      }
+    } catch { /* noop */ }
+    return out;
+  }, [state]);
+
+  useEffect(() => {
+    const readyLines = tickerLines.filter((line) => /\bability\b/i.test(line) && /ready/i.test(line));
+    const usedLines = tickerLines.filter((line) => /\bability\b/i.test(line) && /used/i.test(line));
+
+    const readyCount = readyLines.length;
+    const prevReady = abilityReadyCountRef.current;
+    const latestReady = readyLines[0] ?? '';
+    let newReady = 0;
+    if (readyCount > prevReady) {
+      newReady = readyCount - prevReady;
+    } else if (readyCount > 0 && latestReady && latestReady !== abilityReadyFirstLineRef.current) {
+      newReady = 1;
+    }
+    if (newReady > 0) {
+      for (let i = 0; i < newReady; i++) playSound('ultimate_charge');
+    }
+    abilityReadyCountRef.current = readyCount;
+    abilityReadyFirstLineRef.current = latestReady || '';
+
+    const usedCount = usedLines.length;
+    const prevUsed = abilityUsedCountRef.current;
+    const latestUsed = usedLines[0] ?? '';
+    let newUsed = 0;
+    if (usedCount > prevUsed) {
+      newUsed = usedCount - prevUsed;
+    } else if (usedCount > 0 && latestUsed && latestUsed !== abilityUsedFirstLineRef.current) {
+      newUsed = 1;
+    }
+    if (newUsed > 0) {
+      const now = Date.now();
+      if (now - lastAbilityLocalRef.current < 400 && newUsed > 0) {
+        newUsed = Math.max(0, newUsed - 1);
+      }
+      for (let i = 0; i < newUsed; i++) playSound('ultimate_cast');
+    }
+    abilityUsedCountRef.current = usedCount;
+    abilityUsedFirstLineRef.current = latestUsed || '';
+  }, [tickerLines, playSound]);
 
   const myRank = useMemo(() => {
     try {
@@ -715,6 +837,41 @@ export default function Game() {
                 </div>
               </div>
             </Panel>
+            {hasActiveRace && (
+              <Panel title="Ultimate Ability">
+                <div className="ux-ability-options">
+                  {playerAbilities.map((ability) => {
+                    const selected = ability.id === abilityId;
+                    return (
+                      <div key={ability.id} className={`ux-ability-option ${selected ? 'selected' : ''}`}>
+                        <div className="ux-ability-symbol">{ability.icon}</div>
+                        <div className="ux-ability-body">
+                          <div className="ux-ability-name">{ability.name}</div>
+                          <div className="ux-ability-desc">{ability.description}</div>
+                          <div className="ux-ability-hint">Charge builds when rivals score. Carries across stages.</div>
+                          {selected && (
+                            <div className="ux-ability-hint" style={{ color: abilityReady ? '#7cffb4' : '#9ab8d8' }}>
+                              {abilityStatusText} • {abilityChargesLabel}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>
+                          <Button onClick={() => handleAbilitySelect(ability.id)} disabled={selected || !canChooseAbility}>
+                            {selected ? 'Equipped' : canChooseAbility ? 'Equip' : 'Locked'}
+                          </Button>
+                          {!canChooseAbility && !selected && (
+                            <span className="ux-ability-lock">Available next prep</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!canChooseAbility && (
+                    <div className="ux-ability-note">Abilities can be swapped only before your marble spawns.</div>
+                  )}
+                </div>
+              </Panel>
+            )}
             <Panel title="Status">
               <div style={{ display: 'grid', gap: 8 }}>
                 <div>Players in lobby: {playersCount}</div>
@@ -771,17 +928,50 @@ export default function Game() {
           )}
         </div>
       )}
-      <CheerPanel
-        room={room}
-        me={me}
-        state={state}
-        cheerEdit={cheerEdit}
-        setCheerEdit={setCheerEdit}
-        cheers={cheers}
-        setCheers={setCheers}
-        forceCheerUi={forceCheerUi}
-        lastCheerSentAtRef={lastCheerSentAtRef}
-      />
+      {showAbilitySection && (
+        <div className="mr-ability-wrap">
+          {showAbilityMeter && (
+            <div className={`mr-ability ${abilityReady ? 'ready' : ''}`}>
+              <div className="mr-ability-icon" style={abilityRingStyle}>
+                <div className="mr-ability-icon-inner">{abilityDef.icon}</div>
+                {abilityChargesBanked > 0 && (
+                  <div className="mr-ability-count">×{abilityChargesBanked}</div>
+                )}
+              </div>
+              <div className="mr-ability-info">
+                <div className="mr-ability-name">{abilityDef.name}</div>
+                <div className="mr-ability-desc">{abilityDef.description}</div>
+                  <div className="mr-ability-meta">
+                    <span className="mr-ability-status">{abilityStatusText}</span>
+                    <span>{abilityChargesLabel}</span>
+                    <span title="Charge rate multiplier">{abilityChargeRateText}</span>
+                  {abilityActive && <span className="mr-ability-active">Extra spawn active</span>}
+                </div>
+                <div className="mr-ability-actions">
+                  <Button onClick={triggerAbility} disabled={abilityButtonDisabled}>Use Ability</Button>
+                  {abilityCantReason && abilityButtonDisabled && (
+                    <span className="mr-ability-note">{abilityCantReason}</span>
+                  )}
+                </div>
+                <div className="mr-ability-note">Charge grows when other players score and persists across stages.</div>
+              </div>
+            </div>
+          )}
+          {canCheer && (
+            <CheerPanel
+              room={room}
+              me={me}
+              state={state}
+              cheerEdit={cheerEdit}
+              setCheerEdit={setCheerEdit}
+              cheers={cheers}
+              setCheers={setCheers}
+              forceCheerUi={forceCheerUi}
+              lastCheerSentAtRef={lastCheerSentAtRef}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
  

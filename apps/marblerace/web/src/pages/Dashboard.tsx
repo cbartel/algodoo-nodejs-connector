@@ -34,6 +34,8 @@ export default function Dashboard() {
   const [rowHighlights, setRowHighlights] = useState<{ id: number; left: number; top: number; width: number; height: number; color: string }[]>([]);
   const [cheerFx, setCheerFx] = useState<{ id: number; icon: string; text: string; color: string; left: number; top: number; playerName: string }[]>([]);
   const seenCheerIdsRef = useRef<Set<number>>(new Set());
+  const abilityTickerCountRef = useRef(0);
+  const abilityFirstLineRef = useRef('');
   const s: any = room?.state;
   const { play: playSound } = useSound();
 
@@ -89,9 +91,27 @@ export default function Dashboard() {
       }
     } catch { void 0; }
   }, [roomState.room]);
+useEffect(() => {
+  getServerConfig().then((cfg) => { if (cfg?.publicHttpUrl) setPublicBase(cfg.publicHttpUrl); });
+}, []);
+
   useEffect(() => {
-    getServerConfig().then((cfg) => { if (cfg?.publicHttpUrl) setPublicBase(cfg.publicHttpUrl); });
-  }, []);
+    const abilityLines = eventsObs.filter((line) => /\bability\b/i.test(line) && /used/i.test(line));
+    const abilityCount = abilityLines.length;
+    const prev = abilityTickerCountRef.current;
+    const latest = abilityLines[0] ?? '';
+    let newCount = 0;
+    if (abilityCount > prev) {
+      newCount = abilityCount - prev;
+    } else if (abilityCount > 0 && latest && latest !== abilityFirstLineRef.current) {
+      newCount = 1;
+    }
+    if (newCount > 0) {
+      for (let i = 0; i < newCount; i++) playSound('ultimate_cast');
+    }
+    abilityTickerCountRef.current = abilityCount;
+    abilityFirstLineRef.current = latest || '';
+  }, [eventsObs, playSound]);
   // Helpers
 
   function spawnCheer(it: any) {

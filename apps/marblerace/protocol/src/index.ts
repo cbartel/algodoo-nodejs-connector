@@ -94,6 +94,31 @@ export const defaultMarbleConfig: MarbleConfig = {
 export type PointsTable = number[];
 export const defaultPointsTable: PointsTable = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
+/** Identifier for a player ultimate ability. */
+export type PlayerAbilityId = 'extra_spawn';
+
+/** Metadata describing an ability for UI selection. */
+export interface PlayerAbilityDefinition {
+  id: PlayerAbilityId;
+  name: string;
+  description: string;
+  icon: string;
+}
+
+export const playerAbilities: PlayerAbilityDefinition[] = [
+  {
+    id: 'extra_spawn',
+    name: 'Extra Spawn',
+    description: 'Double your marbles and overwhelm the track. Charge fills as other players score.',
+    icon: '🌀',
+  },
+];
+
+export const playerAbilityById = Object.fromEntries(playerAbilities.map((a) => [a.id, a] as const));
+
+/** Maximum number of ability charges a player can bank at once. */
+export const PLAYER_ABILITY_MAX_CHARGES = 3;
+
 // New tiered points configuration: apply in order; e.g.
 // [{ count: 3, points: 10 }, { count: 5, points: 7 }, { count: 2, points: 5 }]
 // → placements 1..3 get 10; 4..8 get 7; 9..10 get 5; others 0.
@@ -121,6 +146,13 @@ export interface Player {
   name: string;
   config: MarbleConfig;
   totalPoints: number;
+  abilityId: PlayerAbilityId;
+  /** Charge can exceed 1 to allow banking future casts; UI clamps for display. */
+  abilityCharge: number;
+  /** Current bonus/malus applied to charge generation (1 = neutral). */
+  abilityChargeFactor?: number;
+  /** Extra spawn flag for current stage, true once an additional marble was spawned. */
+  extraSpawnActive?: boolean;
   // Tie-break helpers
   bestPlacement: number | null; // lowest number is best (1 means 1st)
   earliestBestStageIndex: number | null; // where bestPlacement occurred first
@@ -159,7 +191,9 @@ export interface RaceState {
 export type ClientMsg =
   | { type: 'handshake'; payload: Handshake }
   | { type: 'join'; payload: { name: string; color?: RGB } }
-  | { type: 'setConfig'; payload: { partial: PartialMarbleConfig } };
+  | { type: 'setConfig'; payload: { partial: PartialMarbleConfig } }
+  | { type: 'setAbility'; payload: { id: PlayerAbilityId } }
+  | { type: 'useAbility'; payload?: Record<string, never> };
 
 // Admin actions (must be authorized by server)
 /** Admin messages gated by MARBLERACE_ADMIN_TOKEN. */
@@ -176,6 +210,8 @@ export type AdminMsg =
   | { type: 'admin/setAutoAdvance'; payload: { auto: boolean } }
   | { type: 'admin/removePlayer'; payload: { playerId: string } }
   | { type: 'admin/respawnPlayer'; payload: { playerId: string } }
+  | { type: 'admin/setPlayerTotalPoints'; payload: { playerId: string; totalPoints: number } }
+  | { type: 'admin/grantAbilityCharge'; payload: { playerId: string; amount?: number } }
   | { type: 'admin/setPrepTimeout'; payload: { seconds?: number; ms?: number } }
   | { type: 'admin/setAutoAdvanceDelay'; payload: { seconds?: number; ms?: number } }
   | { type: 'admin/setMarbleMultiplier'; payload: { value: number } }

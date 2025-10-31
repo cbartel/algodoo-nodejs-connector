@@ -74,43 +74,52 @@ export default function CheerPanel({ room, me, state, cheerEdit, setCheerEdit, c
   return (
     <>
       <style>{`
-        .cheer-panel{position:fixed;left:0;right:0;bottom:calc(48px + env(safe-area-inset-bottom, 0));transform:none;z-index:100;background:rgba(15,17,21,0.92);border:4px solid #6cf;border-radius:12px;padding:10px 12px;box-shadow:0 10px 32px rgba(0,0,0,.6), 0 0 0 2px #000 inset;backdrop-filter:saturate(120%) blur(6px)}
-        .cheer-top{display:flex;justify-content:center;gap:8px;margin-bottom:8px}
-        .cheer-btn{width:56px;height:56px;border:3px solid #333;background:#14161b;color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+        .cheer-panel-wrap{position:relative;width:100%}
+        .cheer-panel{position:relative;width:100%;background:rgba(12,16,22,0.92);border:4px solid #15324e;border-radius:16px;padding:14px 16px;box-shadow:0 12px 28px rgba(0,0,0,0.35);display:grid;gap:12px}
+        .cheer-top{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}
+        .cheer-btn{width:56px;height:56px;border:3px solid #333;background:#14161b;color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.4);transition:border-color .25s ease,box-shadow .25s ease,transform .25s ease}
+        .cheer-btn:disabled{opacity:.6;cursor:not-allowed}
         .cheer-btn-edit{border-color:#2a84ff;background:#0f1b2e;color:#cfe7ff;box-shadow:0 6px 18px rgba(0,40,120,.35), 0 0 0 2px #001628 inset}
-        .cheer-btn-edit:hover{border-color:#6cf;box-shadow:0 0 0 2px #0a3b66 inset,0 8px 22px rgba(0,60,100,.55)}
         .cheer-btn-add{border-color:#28c76f;background:#0f2417;color:#dfffe9;box-shadow:0 6px 18px rgba(0,80,40,.35), 0 0 0 2px #001a0d inset}
-        .cheer-btn-add:hover{border-color:#6f6;box-shadow:0 0 0 2px #0a662f inset,0 8px 22px rgba(0,100,60,.55)}
-        .cheer-btn:hover{border-color:#6cf;box-shadow:0 0 0 2px #036 inset,0 8px 22px rgba(0,40,60,.6)}
+        .cheer-btn:hover:not(:disabled){border-color:#6cf;box-shadow:0 0 0 2px #036 inset,0 8px 22px rgba(0,40,60,.6);transform:translateY(-1px)}
         .cheer-grid{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center}
-        .cheer-edit{position:fixed;left:50%;bottom:calc(112px + env(safe-area-inset-bottom, 0));transform:translateX(-50%);background:#0f1115;border:4px solid #6cf;padding:32px 12px 12px;border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.5);z-index:101;max-width:min(680px, 96vw);max-height:min(60vh, calc(100vh - 240px));display:flex;flex-direction:column}
-        .cheer-list{flex:1;overflow:auto;-webkit-overflow-scrolling:touch}
-        .cheer-backdrop{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.25)}
+        .cheer-fx{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);pointer-events:none;z-index:1}
+        .cheer-edit{position:fixed;left:50%;top:52%;transform:translate(-50%,-50%);background:#0f1115;border:4px solid #6cf;padding:32px 14px 14px;border-radius:16px;box-shadow:0 12px 32px rgba(0,0,0,.5);z-index:101;max-width:min(680px,94vw);max-height:min(70vh,520px);display:flex;flex-direction:column}
+        .cheer-list{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding-right:4px}
+        .cheer-backdrop{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.4)}
         .cheer-row{display:grid;grid-template-columns:64px 1fr auto;gap:8px;align-items:center}
-        .cheer-input{padding:8px;border:3px solid #333;background:#14161b;color:#fff}
-        .emoji-picker{position:fixed;left:50%;bottom:calc(130px + env(safe-area-inset-bottom, 0));transform:translateX(-50%);z-index:102;background:#0f1115;border:4px solid #6cf;border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.5);max-width:min(720px, 96vw);max-height:min(60vh, calc(100vh - 180px));overflow:auto;-webkit-overflow-scrolling:touch;padding:10px}
-        .emoji-grid{display:flex;flex-wrap:wrap;gap:6px;max-height:200px;overflow:auto;padding:6px;background:#0b0f15;border:3px solid #333;border-radius:8px}
+        .cheer-input{padding:8px;border:3px solid #333;background:#14161b;color:#fff;border-radius:10px}
+        .emoji-picker{position:fixed;left:50%;top:52%;transform:translate(-50%,-50%);z-index:102;background:#0f1115;border:4px solid #6cf;border-radius:16px;box-shadow:0 12px 32px rgba(0,0,0,.5);max-width:min(720px,94vw);max-height:min(70vh,500px);overflow:auto;-webkit-overflow-scrolling:touch;padding:10px}
+        .emoji-grid{display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow:auto;padding:6px;background:#0b0f15;border:3px solid #333;border-radius:12px}
         .emoji-btn{width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-size:22px;border:3px solid #333;border-radius:10px;background:#14161b;color:#fff}
         .emoji-btn:hover{border-color:#6cf}
-        @keyframes cheerPulse{0%{transform:translate(-50%,0) scale(.9);opacity:0}25%{transform:translate(-50%,-6px) scale(1);opacity:1}100%{transform:translate(-50%,-14px) scale(1.02);opacity:0}}
+        @keyframes cheerPulse{0%{transform:translate(-50%,0) scale(.9);opacity:0}25%{transform:translate(-50%,-6px) scale(1);opacity:1}100%{transform:translate(-50%,-12px) scale(1.02);opacity:0}}
+        @media(max-width:640px){
+          .cheer-panel{padding:12px}
+          .cheer-top{gap:6px}
+          .cheer-btn{width:48px;height:48px;font-size:24px}
+          .cheer-grid{gap:6px}
+        }
       `}</style>
-      <div className="cheer-panel">
-        <div className="cheer-top">
-          <button className="cheer-btn cheer-btn-edit" onClick={() => setCheerEdit(!cheerEdit)} title="Customize cheer bar" aria-label="Customize cheers">📝</button>
-          <button className="cheer-btn cheer-btn-add" onClick={() => setCheers((prev) => prev.length >= 16 ? prev : [randomCheer(), ...prev])} title="Add random cheer" aria-label="Add random cheer" disabled={cheers.length >= 16}>＋</button>
+      <div className="cheer-panel-wrap">
+        <div className="cheer-panel">
+          <div className="cheer-top">
+            <button className="cheer-btn cheer-btn-edit" onClick={() => setCheerEdit(!cheerEdit)} title="Customize cheer bar" aria-label="Customize cheers">📝</button>
+            <button className="cheer-btn cheer-btn-add" onClick={() => setCheers((prev) => prev.length >= 16 ? prev : [randomCheer(), ...prev])} title="Add random cheer" aria-label="Add random cheer" disabled={cheers.length >= 16}>＋</button>
+          </div>
+          <div className="cheer-grid">
+            {(cheers || []).map((c, idx) => (
+              <button key={`${c.icon}-${idx}`} className="cheer-btn" onClick={(e) => send(c.icon, e)} title={c.text}>{c.icon}</button>
+            ))}
+          </div>
         </div>
-        <div className="cheer-grid">
-          {(cheers || []).map((c, idx) => (
-            <button key={`${c.icon}-${idx}`} className="cheer-btn" onClick={(e) => send(c.icon, e)} title={c.text}>{c.icon}</button>
+        <div className="cheer-fx">
+          {sentFx.map((f) => (
+            <div key={f.id} style={{ animation:'cheerPulse 900ms ease-out both', position:'absolute', left:'50%', transform:'translateX(-50%)', bottom:0 }}>
+              <span style={{ fontSize: 28, filter:'drop-shadow(0 1px 0 #000)' }}>{f.icon}</span>
+            </div>
           ))}
         </div>
-      </div>
-      <div style={{ position:'fixed', left:'50%', bottom:112, transform:'translateX(-50%)', pointerEvents:'none', zIndex:101 }}>
-        {sentFx.map((f) => (
-          <div key={f.id} style={{ animation:'cheerPulse 900ms ease-out both', position:'absolute', left:'50%', transform:'translateX(-50%)', bottom: 0 }}>
-            <span style={{ fontSize: 28, filter:'drop-shadow(0 1px 0 #000)' }}>{f.icon}</span>
-          </div>
-        ))}
       </div>
       {cheerEdit && (
         <>

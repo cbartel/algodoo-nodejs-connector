@@ -17,7 +17,9 @@ export type SoundEffect =
   | 'reward_claim'
   | 'leaderboard'
   | 'cheer'
-  | 'spawn_confirmed';
+  | 'spawn_confirmed'
+  | 'ultimate_charge'
+  | 'ultimate_cast';
 
 export class AudioManager {
   private ctx: AudioContext;
@@ -80,6 +82,28 @@ export class AudioManager {
           { type: 'square', frequency: 660, duration: 0.1, volume: 0.45 },
           { type: 'triangle', frequency: 990, duration: 0.12, volume: 0.5, startOffset: 0.06 },
           { type: 'sawtooth', frequency: 1320, duration: 0.12, volume: 0.35, startOffset: 0.1 },
+        ]);
+        break;
+      case 'ultimate_charge':
+        this.schedule(time, gainScale * 0.9, [
+          { type: 'triangle', frequency: 660, duration: 0.12, volume: 0.32 },
+          { type: 'triangle', frequency: 880, duration: 0.12, volume: 0.36, startOffset: 0.06 },
+          { type: 'triangle', frequency: 1100, duration: 0.15, volume: 0.38, startOffset: 0.12 },
+          { type: 'triangle', frequency: 1320, duration: 0.22, volume: 0.42, startOffset: 0.18 },
+          { type: 'sine', frequency: 1760, duration: 0.28, volume: 0.35, startOffset: 0.22 },
+          { type: 'noise', duration: 0.18, volume: 0.18, startOffset: 0.02 },
+        ]);
+        break;
+      case 'ultimate_cast':
+        this.schedule(time, gainScale * 1.15, [
+          { type: 'noise', duration: 0.18, volume: 0.22 },
+          { type: 'triangle', frequency: 440, duration: 0.35, volume: 0.45 },
+          { type: 'triangle', frequency: 660, duration: 0.38, volume: 0.48, startOffset: 0.08 },
+          { type: 'square', frequency: 880, duration: 0.4, volume: 0.5, startOffset: 0.16 },
+          { type: 'sine', frequency: 1320, duration: 0.52, volume: 0.46, startOffset: 0.2 },
+          { type: 'triangle', frequency: 1760, duration: 0.4, volume: 0.4, startOffset: 0.28 },
+          { type: 'noise', duration: 0.25, volume: 0.2, startOffset: 0.3 },
+          { type: 'sine', frequency: 990, duration: 0.6, volume: 0.32, startOffset: 0.42 },
         ]);
         break;
       default:

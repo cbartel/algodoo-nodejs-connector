@@ -43,4 +43,33 @@
 .ux-actions{display:flex;gap:8px;align-items:center}
 .ux-saving{color:#fc6}
 @media(max-width: 900px){.ux-grid{grid-template-columns:1fr}.ux-preview{width:96px;height:96px;border-width:4px}}
-
+.mr-ability-wrap{display:grid;gap:14px;margin-top:24px}
+.mr-ability{display:flex;gap:16px;align-items:center;background:rgba(9,12,18,0.92);border:4px solid #15324e;border-radius:18px;padding:16px 20px;box-shadow:0 12px 30px rgba(0,0,0,0.35);transition:border-color .3s ease,box-shadow .3s ease,transform .35s ease}
+.mr-ability.ready{border-color:#2c8cff;box-shadow:0 14px 36px rgba(44,140,255,0.25);transform:translateY(-2px)}
+.mr-ability-icon{width:100px;height:100px;border-radius:50%;padding:6px;display:flex;align-items:center;justify-content:center;position:relative;transition:background .6s ease}
+.mr-ability-icon-inner{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:48px;font-weight:900;background:radial-gradient(circle at 30% 30%,rgba(120,190,255,.35),rgba(5,8,13,.9));border:3px solid rgba(102,204,255,.45);box-shadow:0 0 12px rgba(40,120,200,.35) inset}
+.mr-ability.ready .mr-ability-icon-inner{border-color:#9cf;box-shadow:0 0 16px rgba(102,204,255,.75),0 0 24px rgba(65,160,255,.35) inset}
+.mr-ability-count{position:absolute;bottom:-6px;right:-6px;background:#0b2238;border:3px solid #36a2ff;border-radius:18px;padding:2px 8px;font-size:12px;font-weight:700;color:#9cf;box-shadow:0 4px 12px rgba(0,0,0,.45)}
+.mr-ability-info{display:grid;gap:6px;flex:1}
+.mr-ability-name{font-size:20px;font-weight:900;color:#fff;letter-spacing:.4px}
+.mr-ability-desc{color:#9ab8d8;font-size:13px;max-width:520px}
+.mr-ability-meta{display:flex;gap:12px;flex-wrap:wrap;color:#7fa5c9;font-size:12px}
+.mr-ability-actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.mr-ability-status{font-weight:700}
+.mr-ability-note{font-size:12px;color:#6185ad}
+.mr-ability.ready .mr-ability-status{color:#6f6}
+.mr-ability-active{color:#bdf86a;font-weight:700}
+@media(max-width:800px){.mr-ability{padding:14px 16px}.mr-ability-icon{width:92px;height:92px}}
+@media(max-width:640px){.mr-ability{flex-direction:column;align-items:flex-start;padding:14px}.mr-ability-icon{margin:auto;width:86px;height:86px}.mr-ability-info{width:100%}.mr-ability-actions{justify-content:flex-start}}
+@media(max-width:480px){.mr-ability-icon{width:72px;height:72px;padding:4px}.mr-ability-icon-inner{font-size:34px}.mr-ability-name{font-size:18px}.mr-ability-desc{font-size:12px}.mr-ability-meta{flex-direction:column;align-items:flex-start;gap:6px;font-size:11px}.mr-ability-actions{flex-direction:column;align-items:flex-start;gap:8px}.mr-ability-note{font-size:11px}}
+.ux-ability-options{display:grid;gap:12px}
+.ux-ability-option{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:12px 14px;border:3px solid #1b2733;border-radius:14px;background:rgba(12,16,22,.85);box-shadow:0 6px 18px rgba(0,0,0,.35);transition:border-color .3s ease,box-shadow .3s ease}
+.ux-ability-option.selected{border-color:#2c8cff;box-shadow:0 8px 22px rgba(44,140,255,.28)}
+.ux-ability-symbol{font-size:30px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:rgba(44,140,255,.16)}
+.ux-ability-body{display:grid;gap:6px}
+.ux-ability-name{font-weight:800;color:#fff;letter-spacing:.3px}
+.ux-ability-desc{color:#9ab8d8;font-size:13px;max-width:460px}
+.ux-ability-hint{font-size:11px;color:#6f98c5;text-transform:uppercase;letter-spacing:.8px}
+.ux-ability-lock{font-size:11px;color:#fc6;text-transform:uppercase;letter-spacing:.6px}
+.ux-ability-note{font-size:11px;color:#7fa5c9;text-align:right}
+@media(max-width:720px){.ux-ability-option{grid-template-columns:1fr;align-items:flex-start}.ux-ability-option button{justify-self:flex-start}}
